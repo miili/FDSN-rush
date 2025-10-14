@@ -7,7 +7,7 @@ from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator
+from typing import TYPE_CHECKING, Any, AsyncGenerator, NoReturn
 
 import aiohttp
 from pydantic import (
@@ -213,13 +213,19 @@ class FDSNClient(BaseModel):
         le=64,
         description="Maximum number of concurrent connections",
     )
+    n_connections: int = Field(
+        default=24,
+        ge=1,
+        le=128,
+        description="Maximum number of connections in the connection pool",
+    )
     chunk_size: ByteSizeStr = Field(
         default=ByteSize(4 * MB),
         ge=1 * MB,
         description="Length of data chunks to download in bytes",
     )
     rate_limit: int = Field(
-        default=50,
+        default=20,
         ge=1,
         description="Requests per second limit for the FDSN service, 0 for no limit",
     )
@@ -460,7 +466,7 @@ class FDSNClient(BaseModel):
 
         rate_limiter = asyncio.Condition()
 
-        async def rate_limit_timer():
+        async def rate_limit_timer() -> NoReturn:
             while True:
                 async with rate_limiter:
                     rate_limiter.notify()
@@ -470,16 +476,17 @@ class FDSNClient(BaseModel):
             while not self._work_queue.empty():
                 chunk = await self._work_queue.get()
 
-                if logged_error := writer.remote_log.get_error(
+                if logged_error_code := writer.remote_log.get_error(
                     chunk.channel.nslc,
                     chunk.date,
                     self.url,
                 ):
                     logger.warning(
-                        "Skipping %s for %s: %s error logged",
+                        "Skipping %s for %s: %d %s error logged",
                         chunk.channel.nslc.pretty,
                         chunk.date,
-                        get_error_str(logged_error),
+                        logged_error_code,
+                        get_error_str(logged_error_code),
                     )
                     self._stats.chunk_done(chunk)
                     self._work_queue.task_done()
@@ -506,9 +513,10 @@ class FDSNClient(BaseModel):
                 except aiohttp.ClientResponseError as e:
                     error_code = getattr(e, "code", 400)
                     logger.error(
-                        "Failed to download %s for %s: %s error (%s)",
+                        "Failed to download %s for %s: %d %s error (%s)",
                         chunk.channel.nslc.pretty,
                         chunk.date,
+                        error_code,
                         get_error_str(error_code),
                         e.message,
                     )
@@ -558,6 +566,7 @@ class FDSNClient(BaseModel):
                 middlewares=middleware,
                 auto_decompress=True,
                 headers=HEADERS,
+                connector=aiohttp.TCPConnector(limit=self.n_connections),
             )
             async with asyncio.TaskGroup() as tg:
                 for _ in range(self.n_workers):
