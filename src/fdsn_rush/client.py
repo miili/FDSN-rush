@@ -21,9 +21,9 @@ from pydantic import (
 )
 from rich.progress import Progress, TaskID
 
-from fdsn_download.models.station import Channel, Stations, parse_stations
-from fdsn_download.stats import Stats
-from fdsn_download.utils import (
+from fdsn_rush.models.station import Channel, Stations, parse_stations
+from fdsn_rush.stats import Stats
+from fdsn_rush.utils import (
     NSL,
     ByteSizeStr,
     EIDADetails,
@@ -35,7 +35,7 @@ from fdsn_download.utils import (
 if TYPE_CHECKING:
     from rich.table import Table
 
-    from fdsn_download.writer import SDSWriter
+    from fdsn_rush.writer import SDSWriter
 
 logger = logging.getLogger(__name__)
 
@@ -225,7 +225,7 @@ class FDSNClient(BaseModel):
         description="Length of data chunks to download in bytes",
     )
     rate_limit: int = Field(
-        default=20,
+        default=10,
         ge=1,
         description="Requests per second limit for the FDSN service, 0 for no limit",
     )

@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from fdsn_download.models.station import Channel, parse_stations
+from fdsn_rush.models.station import Channel, parse_stations
 
 DATA_PATH = Path(__file__).parent / "data"
 

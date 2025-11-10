@@ -14,10 +14,10 @@ from pyrocko.io import load, save
 from pyrocko.trace import NoData
 from rich.progress import track
 
-from fdsn_download.client import DownloadDayfile
-from fdsn_download.remote_log import RemoteLog
-from fdsn_download.stats import Stats
-from fdsn_download.utils import human_readable_bytes, wait_for_path
+from fdsn_rush.client import DownloadDayfile
+from fdsn_rush.remote_log import RemoteLog
+from fdsn_rush.stats import Stats
+from fdsn_rush.utils import human_readable_bytes, wait_for_path
 
 if TYPE_CHECKING:
     from pyrocko.squirrel import Squirrel

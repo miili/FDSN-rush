@@ -6,11 +6,11 @@
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 [![Pre-commit and Tests](https://github.com/pyrocko/qseek/actions/workflows/tests.yaml/badge.svg)](https://github.com/pyrocko/qseek/actions/workflows/tests.yaml)
 
-FDSN rush allows to download seismic waveform data from FDSN servers in a reproducible and reliable way.
+*FDSN Rush* allows to download seismic waveform data from [FDSN](https://www.fdsn.org/services/) servers in a fast, reproducible and reliable way.
 
 ## Installation
 
-Installation using Pyhthon's pip
+Installation using Python's pip
 
 ```sh
 pip install git+https://github.com/miili/fdsn-rush
@@ -26,13 +26,13 @@ $> fdsn-rush
  FDSN Download to SDS Archive
 
 ╭─ Options ─────────────────────────────────────────────────────────────────╮
-│ --help          Show this message and exit.                               │
-╰───────────────────────────────────────────────────────────────────────────╯
+│ --help          Show this message and exit.                                      │
+╰──────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ────────────────────────────────────────────────────────────────╮
-│ init       Print the configuration.                                       │
-│ download   Download data from FDSN to local SDS archive.                  │
-│ convert    Convert existing MiniSEED files to SDS archive.                │
-╰───────────────────────────────────────────────────────────────────────────╯
+│ init       Print the configuration.                                              │
+│ download   Download data from FDSN to local SDS archive.                         │
+│ convert    Convert existing MiniSEED files to SDS archive.                       │
+╰──────────────────────────────────────────────────────────────────────────╯
 ```
 
 ## Download data
@@ -50,7 +50,7 @@ In this config file configure:
 3. Stations NSL (SEED convention `<network>.<station>.<location>`) codes to download.
 4. The channel priority. In the default config `HH` channels would have the highest priority.
 
-If you have an EIDA key to access restricted waveform data, put the path into `Client.eida_key`.
+If you have an [EIDA](https://www.orfeus-eu.org/data/eida/) key to access restricted waveform data, put the path into `Client.eida_key`.
 
 ```json{
   "writer": {
@@ -101,7 +101,7 @@ fdsn-rush download config.json
 
 ### Converting existing MiniSeed data to SDS Archive
 
-This can be useful to convert unstructured MiniSeed data to an SDS archive.
+This can be useful to convert unstructured MiniSeed data to an [SDS archive structure](https://www.seiscomp.de/seiscomp3/doc/applications/slarchive/SDS.html).
 
 ```sh
 fdsn-rush convert in-folder/ out-sds-folder/

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from fdsn_download.manager import FDSNDownloadManager
+from fdsn_rush.manager import FDSNDownloadManager
 
 
 @pytest.mark.asyncio

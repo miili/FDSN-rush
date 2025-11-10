@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from fdsn_download.utils import _NSL, AUX_CHANNELS, DATETIME_MAX, NSL, NSLC
+from fdsn_rush.utils import _NSL, AUX_CHANNELS, DATETIME_MAX, NSL, NSLC
 
 logger = logging.getLogger(__name__)
 

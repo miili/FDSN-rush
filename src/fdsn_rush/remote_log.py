@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from pydantic import HttpUrl
 
-from fdsn_download.utils import NSLC, datetime_now
+from fdsn_rush.utils import NSLC, datetime_now
 
 logger = logging.getLogger(__name__)
 

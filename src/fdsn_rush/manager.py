@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from rich.progress import track
 
-from fdsn_download.client import DownloadDayfile, FDSNClient
-from fdsn_download.stats import Stats
-from fdsn_download.utils import _NSL, NSL, Date, date_today, datetime_now
-from fdsn_download.writer import SDSWriter
+from fdsn_rush.client import DownloadDayfile, FDSNClient
+from fdsn_rush.stats import Stats
+from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now
+from fdsn_rush.writer import SDSWriter
 
 if TYPE_CHECKING:
     from rich.table import Table

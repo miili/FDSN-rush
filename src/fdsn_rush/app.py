@@ -7,11 +7,12 @@ from typing import Annotated
 
 import rich
 import typer
-from fdsn_download.convert import convert_sds
-from fdsn_download.manager import FDSNDownloadManager
-from fdsn_download.stats import live_view
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
+
+from fdsn_rush.convert import convert_sds
+from fdsn_rush.manager import FDSNDownloadManager
+from fdsn_rush.stats import live_view
 
 FORMAT = "%(message)s"
 logging.basicConfig(
