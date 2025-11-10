@@ -43,6 +43,7 @@ async def convert(input: Path, output: Path, steim: Literal[1, 2] = 2):
             record_length=4096,
             steim=2,
             append=True,
+            check_overlaps=False,
         )
     except FileSaveError as e:
         logger.error("Failed to save: %s", e)

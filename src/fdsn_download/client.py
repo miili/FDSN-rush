@@ -286,7 +286,16 @@ class FDSNClient(BaseModel):
             ) as response,
         ):
             logger.debug("Fetching available stations from %s", response.url)
-            response.raise_for_status()
+            try:
+                response.raise_for_status()
+            except aiohttp.ClientResponseError as e:
+                logger.error(
+                    "Failed to fetch stations from %s: %d %s error (%s)",
+                    self.url,
+                    e.status,
+                    get_error_str(e.status),
+                    e.message,
+                )
             data = await response.text()
             self.available_stations = parse_stations(data)
 
