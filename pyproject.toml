@@ -1,7 +1,7 @@
 [project]
-name = "fdsn-download"
+name = "fdsn-rush"
 version = "0.1.0"
-description = "A tool for downloading FDSN archive data to local SDS structure."
+description = "Fast and modern FDSN Download"
 readme = "README.md"
 authors = [{ name = "miili", email = "marius.isken@gfz.de" }]
 requires-python = ">=3.10"
@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.scripts]
-fdsn-download = "fdsn_download.app:main"
+fdsn-rush = "fdsn_download.app:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -59,10 +59,12 @@ class FDSNDownloadManager(BaseModel):
     )
     station_selection: list[NSL] = Field(
         default=[_NSL("2D", "", "")],
+        min_length=1,
         description="List of NSL selections for stations to download",
     )
     channel_priority: list[str] = Field(
         default=["HH[ZNE12]", "EH[ZNE12]", "HN[ZNE12]"],
+        min_length=1,
         description="List of channel codes to download",
     )
     station_blacklist: set[NSL] = Field(

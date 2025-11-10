@@ -7,12 +7,11 @@ from typing import Annotated
 
 import rich
 import typer
-from pydantic import DirectoryPath, NewPath
-from rich.logging import RichHandler
-
 from fdsn_download.convert import convert_sds
 from fdsn_download.manager import FDSNDownloadManager
 from fdsn_download.stats import live_view
+from pydantic import DirectoryPath, NewPath
+from rich.logging import RichHandler
 
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -20,8 +19,8 @@ logging.basicConfig(
 )
 
 app = typer.Typer(
-    name="fdsn-download",
-    help="FDSN Download to SDS Archive",
+    name="fdsn-rush",
+    help="Fast and modern FDSN Download",
     no_args_is_help=True,
     add_completion=False,
 )
