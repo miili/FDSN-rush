@@ -21,18 +21,19 @@ The user CLI is exposed as `fdsn-rush` command.
 ```sh
 $> fdsn-rush
 
+
  Usage: fdsn-rush [OPTIONS] COMMAND [ARGS]...
 
  FDSN Download to SDS Archive
 
-╭─ Options ─────────────────────────────────────────────────────────────────╮
-│ --help          Show this message and exit.                                      │
-╰──────────────────────────────────────────────────────────────────────────╯
-╭─ Commands ────────────────────────────────────────────────────────────────╮
-│ init       Print the configuration.                                              │
-│ download   Download data from FDSN to local SDS archive.                         │
-│ convert    Convert existing MiniSEED files to SDS archive.                       │
-╰──────────────────────────────────────────────────────────────────────────╯
+╭─ Options ────────────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                          │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ───────────────────────────────────────────────────────────────────────────╮
+│ init       Print the configuration.                                                  │
+│ download   Download data from FDSN to local SDS archive.                             │
+│ convert    Convert existing MiniSEED files to SDS archive.                           │
+╰──────────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 ## Download data
