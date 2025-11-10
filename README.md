@@ -4,7 +4,7 @@
 
 [![uv](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json)](https://github.com/astral-sh/uv)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Pre-commit and Tests](https://github.com/pyrocko/qseek/actions/workflows/tests.yaml/badge.svg)](https://github.com/pyrocko/qseek/actions/workflows/tests.yaml)
+[![Pre-commit](https://github.com/miili/FDSN-rush/actions/workflows/pre-commit.yaml/badge.svg)](https://github.com/miili/FDSN-rush/actions/workflows/pre-commit.yaml)
 
 *FDSN Rush* allows to download seismic waveform data from [FDSN](https://www.fdsn.org/services/) servers in a fast, reproducible and reliable way.
 
@@ -47,10 +47,12 @@ In this config file configure:
 
 1. FDSN servers to fetch data from, in this example <https://geofon.gfz.de>.
 2. Timerange to download, here substitutes `today` and `yesterday` are allowed.
-3. Stations NSL (SEED convention `<network>.<station>.<location>`) codes to download.
+3. Stations NSL codes (SEED convention `<network>.<station>.<location>`) to download.
 4. The channel priority. In the default config `HH` channels would have the highest priority.
 
 If you have an [EIDA](https://www.orfeus-eu.org/data/eida/) key to access restricted waveform data, put the path into `Client.eida_key`.
+
+The MiniSeed data will be writen out into an [SDS](https://www.seiscomp.de/seiscomp3/doc/applications/slarchive/SDS.html) directory structure located at `data/`. All metadata will be saved in a `metadata/` folder.
 
 ```json{
   "writer": {
