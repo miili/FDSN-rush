@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 SDS_TEMPLATE: str = (
     "{year}/{network}/{station}/{channel}.D/"
-    "{network}.{station}.{location}.{channel}.D.{year}.{julianday}"
+    "{network}.{station}.{location}.{channel}.D.{year}.{julianday:03d}"
 )
 
 
