@@ -43,10 +43,11 @@ async def convert(input: Path, output: Path, steim: Literal[1, 2] = 2):
             traces,
             str(output / TEMPLATE),
             record_length=4096,
-            steim=2,
+            steim=steim,
             append=True,
             check_overlaps=False,
         )
+
     except FileSaveError as e:
         logger.error("Failed to save: %s", e)
         outfiles = {trace.fill_template(str(output / TEMPLATE)) for trace in traces}
