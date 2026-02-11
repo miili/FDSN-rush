@@ -233,7 +233,7 @@ class SDSWriter(BaseModel):
 
             file_suffix = file.suffix
             # Fix files with incorrect date suffixes (e.g. .1 instead of .01)
-            if len(file_suffix) == 3 and file_suffix[1:].isdigit():
+            if len(file_suffix) < 4 and file_suffix[1:].isdigit():
                 day = int(file_suffix[1:])
                 fixed_name = file.with_suffix(f".{day:03d}")
                 file.rename(fixed_name)
