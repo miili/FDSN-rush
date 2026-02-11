@@ -10,7 +10,7 @@ from pydantic import ByteSize
 from pyrocko.io import FileLoadError, FileSaveError, load, save
 from pyrocko.io.mseed import detect as mseed_detect
 from pyrocko.trace import Trace
-from rich.progress import track
+from rich.progress import Progress
 
 TEMPLATE: str = (
     "%(tmin_year)s/%(network)s/%(station)s/%(channel)s.D"
@@ -71,25 +71,30 @@ async def convert_sds(
     nbytes = 0
 
     input_files = set()
-    for path in track(
-        input.rglob("*.*"),
-        description="Scanning files",
-        show_speed=False,
-    ):
-        if not path.is_file():
-            continue
+    with Progress() as progress:
+        task = progress.add_task("Scanning files", total=None)
 
-        with open(path, "rb") as f:
-            try:
-                header = f.read(512)
-            except OSError:
+        for i, path in enumerate(input.rglob("*.*")):
+            if not path.is_file():
                 continue
 
-        if not mseed_detect(header):
-            continue
+            with open(path, "rb") as f:
+                try:
+                    header = f.read(512)
+                except OSError:
+                    continue
 
-        input_files.add(path)
-        nbytes += path.stat().st_size
+            if not mseed_detect(header):
+                continue
+
+            input_files.add(path)
+            nbytes += path.stat().st_size
+            if i % 100 == 0:
+                progress.update(
+                    task,
+                    completed=i,
+                    description=f"Scanned {ByteSize(nbytes).human_readable()}",
+                )
 
     logger.info(
         "%s files found (%s total size)",
@@ -98,7 +103,10 @@ async def convert_sds(
     )
 
     queue = asyncio.Queue(n_workers)
-    for path in track(input_files, description="Processing"):
-        task = asyncio.create_task(convert(path, output, network, steim))
-        task.add_done_callback(lambda _: queue.get_nowait())
-        await queue.put(task)
+    with Progress() as progress:
+        task = progress.add_task("Processing", total=len(input_files))
+        for path in input_files:
+            t = asyncio.create_task(convert(path, output, network, steim))
+            t.add_done_callback(lambda _: queue.get_nowait())
+            await queue.put(t)
+            progress.update(task, advance=1)
