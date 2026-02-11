@@ -79,6 +79,13 @@ def convert(
             help="Path to the output directory for SDS archive",
         ),
     ],
+    network: Annotated[
+        str,
+        typer.Option(
+            ...,
+            help="Network code to set for all traces",
+        ),
+    ] = "",
     steim: Annotated[
         int,
         typer.Option(
@@ -97,7 +104,7 @@ def convert(
     """Convert existing MiniSEED files to SDS archive."""
     if steim not in (1, 2):
         raise typer.BadParameter("STEIM must be either 1 or 2")
-    asyncio.run(convert_sds(input, output, n_workers, steim))
+    asyncio.run(convert_sds(input, output, network, steim, n_workers))
 
 
 def main():

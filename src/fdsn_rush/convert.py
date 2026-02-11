@@ -24,7 +24,9 @@ FILE_ERRORS = set()
 logger = logging.getLogger(__name__)
 
 
-async def convert(input: Path, output: Path, steim: Literal[1, 2] = 2):
+async def convert(
+    input: Path, output: Path, network: str = "", steim: Literal[1, 2] = 2
+):
     try:
         traces: list[Trace] = await asyncio.to_thread(
             load,
@@ -60,7 +62,11 @@ async def convert(input: Path, output: Path, steim: Literal[1, 2] = 2):
 
 
 async def convert_sds(
-    input: Path, output: Path, n_workers: int = 64, steim: Literal[1, 2] = 2
+    input: Path,
+    output: Path,
+    network: str = "",
+    steim: Literal[1, 2] = 2,
+    n_workers: int = 64,
 ):
     nbytes = 0
 
@@ -93,6 +99,6 @@ async def convert_sds(
 
     queue = asyncio.Queue(n_workers)
     for path in track(input_files, description="Processing"):
-        task = asyncio.create_task(convert(path, output, steim))
+        task = asyncio.create_task(convert(path, output, network, steim))
         task.add_done_callback(lambda _: queue.get_nowait())
         await queue.put(task)

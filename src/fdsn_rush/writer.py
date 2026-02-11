@@ -231,6 +231,14 @@ class SDSWriter(BaseModel):
                 logger.warning("Removed empty file %s", file)
                 continue
 
+            file_suffix = file.suffix
+            # Fix files with incorrect date suffixes (e.g. .1 instead of .01)
+            if len(file_suffix) == 3 and file_suffix[1:].isdigit():
+                day = int(file_suffix[1:])
+                fixed_name = file.with_suffix(f".{day:03d}")
+                file.rename(fixed_name)
+                logger.warning("Renamed file %s to %s", file, fixed_name)
+
             self._stats.archive_size += file_size
 
             if i_file % 500 == 0:
