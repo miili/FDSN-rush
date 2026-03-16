@@ -72,7 +72,7 @@ class FDSNDownloadManager(BaseModel):
         description="List of NSL selections for stations to exclude from download",
     )
     min_channels_per_station: int = Field(
-        default=3,
+        default=1,
         description="Minimum number of channels required per day.",
     )
     min_sampling_rate: float = Field(

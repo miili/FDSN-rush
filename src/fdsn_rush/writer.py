@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr
 from pyrocko.io import load, save
-from pyrocko.trace import NoData
+from pyrocko.trace import NoData, degapper
 from rich.progress import track
 
 from fdsn_rush.client import DownloadDayfile
@@ -102,6 +102,10 @@ class SDSWriter(BaseModel):
         default=timedelta(minutes=1),
         description="Minimum length of data to be saved",
     )
+    fix_date_suffixes: bool = Field(
+        default=False,
+        description="Whether to fix files with incorrect date suffixes",
+    )
 
     squirrel_environment: Path | None = Field(
         default=None,
@@ -154,6 +158,8 @@ class SDSWriter(BaseModel):
         logger.debug("Trimming traces to dayfile time range")
         tmin, tmax = download.timestamp_range()
         trace_min_length = self.min_length_seconds.total_seconds()
+        traces = degapper(sorted(traces, key=lambda tr: tr.full_id))
+
         for trace in traces.copy():
             trace_length = trace.tmax - trace.tmin
             if trace_length < trace_min_length:
@@ -196,7 +202,7 @@ class SDSWriter(BaseModel):
             check_overlaps=False,
         )
 
-        partial_file_path.unlink()
+        partial_file_path.unlink(missing_ok=True)
 
         # This is a safeguard to ensure the file is fully written
         # Some storage systems may have delays
@@ -231,18 +237,24 @@ class SDSWriter(BaseModel):
                 logger.warning("Removed empty file %s", file)
                 continue
 
-            file_suffix = file.suffix
-            # Fix files with incorrect date suffixes (e.g. .1 instead of .01)
-            if len(file_suffix) < 4 and file_suffix[1:].isdigit():
-                day = int(file_suffix[1:])
-                fixed_name = file.with_suffix(f".{day:03d}")
-                file.rename(fixed_name)
-                logger.warning("Renamed file %s to %s", file, fixed_name)
-
             self._stats.archive_size += file_size
 
             if i_file % 500 == 0:
                 await asyncio.sleep(0.0)
+
+        if self.fix_date_suffixes:
+            for i_file, file in track(
+                enumerate(self.sds_archive.glob("**/*.[0-9]*")),
+                description="Checking date suffixes...",
+                show_speed=False,
+            ):
+                file_suffix = file.suffix
+                # Fix files with incorrect date suffixes (e.g. .1 instead of .01)
+                if len(file_suffix) < 4 and file_suffix[1:].isdigit():
+                    day = int(file_suffix[1:])
+                    fixed_name = file.with_suffix(f".{day:03d}")
+                    file.rename(fixed_name)
+                    logger.warning("Renamed file %s to %s", file, fixed_name)
 
         remote_log = self.sds_archive / "remote_errors.log"
         self._remote_log.set_logfile(remote_log)
