@@ -160,22 +160,25 @@ class SDSWriter(BaseModel):
         trace_min_length = self.min_length_seconds.total_seconds()
         traces = degapper(sorted(traces, key=lambda tr: tr.full_id))
 
+        n_short_removed = 0
         for trace in traces.copy():
             trace_length = trace.tmax - trace.tmin
             if trace_length < trace_min_length:
-                logger.warning(
-                    "Removing short trace from %s.%s of %.1f s on %s",
-                    download.channel.nsl.pretty,
-                    download.channel.code,
-                    trace_length,
-                    download.date,
-                )
                 traces.remove(trace)
+                n_short_removed += 1
                 continue
             try:
                 await asyncio.to_thread(trace.chop, tmin=tmin, tmax=tmax)
             except NoData:
                 continue
+        if n_short_removed:
+            logger.warning(
+                "Removed %d short traces for %s channel %s on %s",
+                n_short_removed,
+                download.channel.nsl.pretty,
+                download.channel.code,
+                download.date,
+            )
 
         if not traces:
             logger.warning(
@@ -243,7 +246,7 @@ class SDSWriter(BaseModel):
                 await asyncio.sleep(0.0)
 
         if self.fix_date_suffixes:
-            for i_file, file in track(
+            for _, file in track(
                 enumerate(self.sds_archive.glob("**/*.[0-9]*")),
                 description="Checking date suffixes...",
                 show_speed=False,
