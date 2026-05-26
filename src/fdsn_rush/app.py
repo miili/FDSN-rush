@@ -46,7 +46,14 @@ def download(
             help="Path to the configuration file",
         ),
     ],
-    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True)] = 0,
+    metadata_only: Annotated[
+        bool,
+        typer.Option("--metadata-only", "-m", is_flag=True),
+    ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option("--verbose", "-v", count=True),
+    ] = 0,
 ) -> None:
     """Download data from FDSN to local SDS archive."""
     client = FDSNDownloadManager.load(file)
@@ -58,7 +65,7 @@ def download(
     logging.root.setLevel(log_level)
 
     async def run_download() -> None:
-        download = asyncio.create_task(client.download())
+        download = asyncio.create_task(client.download(metadata_only=metadata_only))
         stats_view = asyncio.create_task(live_view())
         await download
         stats_view.cancel()

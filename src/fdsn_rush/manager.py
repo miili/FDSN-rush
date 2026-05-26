@@ -194,15 +194,21 @@ class FDSNDownloadManager(BaseModel):
 
         await client.download(writer)
 
-    async def download(self):
-        """Download data using all configured clients."""
+    async def download(self, metadata_only: bool = False):
+        """Download data using all configured clients.
+
+        Args:
+            metadata_only: If True, only download metadata without downloading the data files.
+        """
         await self.prepare()
+        await self.download_metadata()
+        if metadata_only:
+            return
 
         async with asyncio.TaskGroup() as tg:
             for client in self.clients:
                 tg.create_task(self._download_from_client(client, self.writer))
         logger.info("All downloads completed successfully.")
-        await self.download_metadata()
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""
