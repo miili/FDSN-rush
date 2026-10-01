@@ -51,6 +51,11 @@ async def _file_lock(file_path: Path):
         FILE_LOCKS.pop(file_path, None)
 
 
+def _append_bytes(file_path: Path, data: bytes) -> None:
+    with file_path.open("ab") as file:
+        file.write(data)
+
+
 class SDSWriterStats(Stats):
     _pos: int = 10
 
@@ -139,8 +144,7 @@ class SDSWriter(BaseModel):
         file_path.parent.mkdir(parents=True, exist_ok=True)
 
         async with _file_lock(file_path):
-            with open(file_path, "ab") as file:
-                await asyncio.to_thread(file.write, data)
+            await asyncio.to_thread(_append_bytes, file_path, data)
 
     async def done(self, download: DownloadDayfile) -> None:
         """Finalize the download for the channel."""
@@ -151,7 +155,8 @@ class SDSWriter(BaseModel):
 
         try:
             traces: list[Trace] = load(str(partial_file_path))
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
+            # A corrupt partial file must not abort the whole download
             logger.error("Failed to load MiniSEED file %s: %s", partial_file_path, e)
             return
 

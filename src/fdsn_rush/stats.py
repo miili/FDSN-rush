@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import random
 import string
-from typing import Any, Iterator, NoReturn
+from collections.abc import Iterator
+from typing import Any, NoReturn
 from weakref import WeakValueDictionary
 
 from pydantic import BaseModel
@@ -63,7 +64,7 @@ class Stats(BaseModel):
         yield from self.model_fields.items()
         yield from self.model_computed_fields.items()
 
-    def model_post_init(self, __context: Any) -> None:
+    def model_post_init(self, context: Any, /) -> None:
         """Post-initialization hook for Stats."""
         uid = "".join(random.choices(string.ascii_uppercase + string.digits, k=16))
         STATS_INSTANCES[uid] = self

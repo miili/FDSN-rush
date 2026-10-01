@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -18,8 +18,8 @@ from pydantic import (
 
 logger = logging.getLogger(__name__)
 
-DATETIME_MAX = datetime.max.replace(tzinfo=timezone.utc)
-DATETIME_MIN = datetime.min.replace(tzinfo=timezone.utc)
+DATETIME_MAX = datetime.max.replace(tzinfo=UTC)
+DATETIME_MIN = datetime.min.replace(tzinfo=UTC)
 
 AUX_CHANNELS = {
     "HDF",
@@ -136,7 +136,8 @@ class _NSL(NamedTuple):
         if isinstance(nsl, (list, tuple)):
             return cls(*nsl)
         if not isinstance(nsl, str):
-            raise ValueError(f"invalid NSL {nsl}")
+            # pydantic only wraps ValueError into a ValidationError
+            raise ValueError(f"invalid NSL {nsl}")  # noqa: TRY004
 
         parts = nsl.split(".")
         n_parts = len(parts)
@@ -239,7 +240,7 @@ Date = Annotated[date, WrapValidator(_parse_date), PlainSerializer(_serialize_da
 
 def datetime_now() -> datetime:
     """Return the current UTC datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def date_today() -> date:
@@ -247,7 +248,7 @@ def date_today() -> date:
     return datetime_now().date()
 
 
-def human_readable_bytes(size: int | float, decimal: bool = False) -> str:
+def human_readable_bytes(size: float, decimal: bool = False) -> str:
     """Convert a size in bytes to a human-readable string representation.
 
     Args:
@@ -290,7 +291,7 @@ async def wait_for_path(
 
     try:
         await asyncio.wait_for(await_path(), timeout=timeout)
-    except asyncio.TimeoutError as e:
+    except TimeoutError as e:
         raise FileNotFoundError(
             f"Path {path} did not appear within {timeout} seconds"
         ) from e

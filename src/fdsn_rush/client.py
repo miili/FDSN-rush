@@ -4,11 +4,12 @@ import asyncio
 import logging
 import re
 from collections import defaultdict, deque
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import UTC, date, datetime, time, timedelta
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, AsyncGenerator, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
 import aiohttp
 from pydantic import (
@@ -84,7 +85,7 @@ class DownloadDayfile:
 
     def timestamp_range(self) -> tuple[float, float]:
         """Return the start and end timestamps for the day."""
-        tmin = datetime.combine(self.date, time=time(), tzinfo=timezone.utc).timestamp()
+        tmin = datetime.combine(self.date, time=time(), tzinfo=UTC).timestamp()
         tmax = tmin + 24 * 60 * 60
         return tmin, tmax
 

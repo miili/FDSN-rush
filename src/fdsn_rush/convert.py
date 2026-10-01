@@ -5,7 +5,7 @@ import contextlib
 import logging
 import re
 from collections import defaultdict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Literal
 
@@ -60,8 +60,8 @@ async def convert(
 
     split_traces = []
     for tr in traces:
-        tr_start = datetime.fromtimestamp(tr.tmin, tz=timezone.utc)
-        tr_end = datetime.fromtimestamp(tr.tmax, tz=timezone.utc)
+        tr_start = datetime.fromtimestamp(tr.tmin, tz=UTC)
+        tr_end = datetime.fromtimestamp(tr.tmax, tz=UTC)
 
         if tr_start.date() == tr_end.date():
             split_traces.append(tr)
@@ -83,7 +83,7 @@ async def convert(
 
     for trace in split_traces:
         tr_tmid = trace.tmin + (trace.tmax - trace.tmin) / 2
-        date = datetime.fromtimestamp(tr_tmid, tz=timezone.utc).date()
+        date = datetime.fromtimestamp(tr_tmid, tz=UTC).date()
         name = SDS_TEMPLATE.format(
             year=date.year,
             network=trace.network,
@@ -113,6 +113,16 @@ async def convert(
                 f.write("\n".join(outfiles) + "\n")
 
 
+def _is_mseed(path: Path) -> bool:
+    """Check if the file starts with a MiniSEED header."""
+    try:
+        with path.open("rb") as f:
+            header = f.read(512)
+    except OSError:
+        return False
+    return bool(mseed_detect(header))
+
+
 async def convert_sds(
     input: Path,
     output: Path,
@@ -130,13 +140,7 @@ async def convert_sds(
             if not path.is_file():
                 continue
 
-            with open(path, "rb") as f:
-                try:
-                    header = f.read(512)
-                except OSError:
-                    continue
-
-            if not mseed_detect(header):
+            if not _is_mseed(path):
                 continue
 
             input_files.add(path)

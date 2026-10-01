@@ -16,7 +16,7 @@ LOG_ERROR_CODES = {404}
 
 
 def _hash_error(nslc: NSLC, date: date, host: str) -> bytes:
-    return sha1(f"{nslc.pretty}{date}{host}".encode("utf-8")).digest()
+    return sha1(f"{nslc.pretty}{date}{host}".encode()).digest()
 
 
 class RemoteError(NamedTuple):
