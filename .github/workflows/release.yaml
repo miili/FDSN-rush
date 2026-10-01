@@ -1,0 +1,102 @@
+name: Release
+
+on:
+    push:
+        branches:
+            - main
+        tags:
+            - "v*"
+    pull_request:
+        paths:
+            - ".github/workflows/release.yaml"
+            - "pyproject.toml"
+    workflow_dispatch:
+
+concurrency:
+    group: release-${{ github.ref }}
+    cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+    contents: read
+
+jobs:
+    build:
+        name: Build distributions
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  fetch-depth: 0 # hatch-vcs derives the version from the git tags
+
+            - uses: astral-sh/setup-uv@v10.2.0
+
+            - name: Build sdist and wheel
+              run: uv build
+
+            - name: Check the version matches the tag
+              if: startsWith(github.ref, 'refs/tags/')
+              run: |
+                  expected="${GITHUB_REF_NAME#v}"
+                  for dist in dist/*; do
+                      case "$dist" in
+                          *"-${expected}.tar.gz"|*"-${expected}-"*.whl) ;;
+                          *) echo "::error::$dist does not match tag version $expected"; exit 1 ;;
+                      esac
+                  done
+
+            - name: Check distributions
+              run: uvx twine check --strict dist/*
+
+            - name: Smoke test the wheel
+              run: uvx --isolated --from dist/*.whl fdsn-rush --version
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: dist
+                  path: dist/
+
+    tests:
+        name: Tests
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: ./.github/workflows/tests.yaml
+
+    pypi-publish:
+        name: Publish to PyPI
+        if: startsWith(github.ref, 'refs/tags/')
+        needs: [build, tests]
+        runs-on: ubuntu-latest
+        environment:
+            name: pypi
+            url: https://pypi.org/p/fdsn-rush
+        permissions:
+            id-token: write # mandatory for trusted publishing
+        steps:
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist/
+
+            - uses: pypa/gh-action-pypi-publish@release/v1
+
+    github-release:
+        name: Create GitHub release
+        if: startsWith(github.ref, 'refs/tags/')
+        needs: pypi-publish
+        runs-on: ubuntu-latest
+        permissions:
+            contents: write
+        steps:
+            - uses: actions/download-artifact@v8
+              with:
+                  name: dist
+                  path: dist/
+
+            - name: Create release with generated notes
+              env:
+                  GH_TOKEN: ${{ github.token }}
+              run: >-
+                  gh release create "$GITHUB_REF_NAME" dist/*
+                  --repo "$GITHUB_REPOSITORY"
+                  --title "$GITHUB_REF_NAME"
+                  --generate-notes
+                  --verify-tag

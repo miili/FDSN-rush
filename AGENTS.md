@@ -23,6 +23,7 @@ CI (`.github/workflows/`):
 - `pre-commit.yaml` runs the `.pre-commit-config.yaml` hooks through prek: ruff lint + format, plus whitespace/EOF/yaml checks.
 - `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.11–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
 - `docs.yaml` builds the docs strictly on every PR and push, and deploys `site/` to GitHub Pages from `main` only. The repo's Pages source must be set to "GitHub Actions".
+- `release.yaml` builds the sdist and wheel on every push to `main` (and on PRs touching packaging). On a `v*` tag it also runs `tests.yaml` (via `workflow_call`), publishes to PyPI with trusted publishing (environment `pypi`), and creates a GitHub release with generated notes.
 - `astral-sh/setup-uv` has no floating major tags. Pin a full version (`@v10.2.0`).
 
 Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py311` target from `requires-python`. Rules that bite:
@@ -69,6 +70,17 @@ Tests are fully offline. `asyncio_mode = "auto"` is set, so `async def test_*` n
 - `fake_fdsn`: an `aiohttp.test_utils.TestServer` serving station and dataselect queries. Point a `FDSNClient(url=fake_fdsn.url)` at it. Every dataselect query is recorded in `fake_fdsn.dataselect_requests`.
 
 Test modules import constants and types from `conftest` directly (`from conftest import STATION_TEXT`). When changing download, writer or rerun behaviour, extend `tests/test_manager.py::test_download`. It runs a full download twice and checks that the second run makes no new requests.
+
+## Releasing
+
+Published on PyPI as `fdsn-rush` under GPL-3.0-or-later. The version is derived from git tags by `hatch-vcs`. There is no version in `pyproject.toml`. Untagged builds get versions like `0.1.dev56+g965c0dc`.
+
+```sh
+git tag -a v0.2.0 -m "v0.2.0" && git push origin v0.2.0   # triggers release.yaml
+SETUPTOOLS_SCM_PRETEND_VERSION=0.2.0 uv build             # local build with a fixed version
+```
+
+Tags must be `v` + a PEP 440 version (`v0.2.0`, `v0.3.0rc1`), and CI checks that the built files carry exactly that version. The sdist ships `src/` and `tests/` but not `docs/`, so `tests/test_docs.py` skips when the docs are missing.
 
 ## Documentation
 

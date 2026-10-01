@@ -7,6 +7,8 @@ on:
             - main
         tags:
             - "*"
+    # Called by the release workflow before publishing
+    workflow_call:
 
 jobs:
     pytest:
