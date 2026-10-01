@@ -59,6 +59,7 @@ class RemoteLog:
     def __init__(self, log_file: Path | None = None):
         self.errors: list[RemoteError] = []
         self._error_hash: dict[bytes, int] = {}
+        self.file: Path | None = None
         if log_file and log_file.exists():
             self.set_logfile(log_file)
 

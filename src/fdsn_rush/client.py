@@ -548,7 +548,7 @@ class FDSNClient(BaseModel):
                     ):
                         await writer.add_data(chunk, data)
                 except aiohttp.ClientResponseError as e:
-                    error_code = getattr(e, "code", 400)
+                    error_code = e.status
                     logger.error(
                         "Failed to download %s for %s: %d %s error (%s)",
                         chunk.channel.nslc.pretty,

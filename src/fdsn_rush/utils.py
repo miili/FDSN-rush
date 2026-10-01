@@ -94,7 +94,9 @@ class _NSL(NamedTuple):
         return self.pretty
 
     def match(self, other: NSL) -> bool:
-        """Check if the current NSL object matches another NSL object.
+        """Check if another NSL object matches this one as a selector.
+
+        Empty codes act as wildcards, codes may contain fnmatch patterns.
 
         Args:
             other (NSL): The NSL object to compare with.
@@ -105,15 +107,15 @@ class _NSL(NamedTuple):
         """
         if self.location:
             return (
-                fnmatch(self.network, other.network)
-                and fnmatch(self.station, other.station)
-                and fnmatch(self.location, other.location)
+                fnmatch(other.network, self.network)
+                and fnmatch(other.station, self.station)
+                and fnmatch(other.location, self.location)
             )
         if self.station:
-            return fnmatch(self.network, other.network) and fnmatch(
-                self.station, other.station
+            return fnmatch(other.network, self.network) and fnmatch(
+                other.station, self.station
             )
-        return fnmatch(self.network, other.network)
+        return fnmatch(other.network, self.network)
 
     @classmethod
     def parse(cls, nsl: str | NSL | list[str] | tuple[str, str, str]) -> NSL:
