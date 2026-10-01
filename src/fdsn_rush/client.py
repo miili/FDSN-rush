@@ -6,6 +6,7 @@ import re
 from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from itertools import groupby
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, AsyncGenerator, NoReturn
 
@@ -274,30 +275,56 @@ class FDSNClient(BaseModel):
 
         logger.info("Preparing FDSN service: %s", self.url)
 
-        async with (
-            aiohttp.ClientSession(
-                base_url=str(self.url),
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                headers=HEADERS,
-            ) as client,
-            client.get(
-                "/fdsnws/station/1/query",
-                params=params,
-            ) as response,
-        ):
-            logger.debug("Fetching available stations from %s", response.url)
-            try:
-                response.raise_for_status()
-            except aiohttp.ClientResponseError as e:
-                logger.error(
-                    "Failed to fetch stations from %s: %d %s error (%s)",
-                    self.url,
-                    e.status,
-                    get_error_str(e.status),
-                    e.message,
+        for network, nsls in groupby(selection, key=lambda nsl: nsl.network):
+            nsls = list(nsls)
+            networks = {nsl.network for nsl in nsls}
+            stations = {nsl.station for nsl in nsls}
+            locations = {nsl.location for nsl in nsls}
+
+            params = {
+                "network": ",".join(networks),
+                "station": ",".join(stations),
+                "location": ",".join(locations),
+                "starttime": starttime.isoformat(),
+                "endtime": endtime.isoformat(),
+                "level": "channel",
+                "format": "text",
+                "nodata": "404",
+            }
+            _clean_params(params)
+
+            async with (
+                aiohttp.ClientSession(
+                    base_url=str(self.url),
+                    timeout=aiohttp.ClientTimeout(total=self.timeout),
+                    headers=HEADERS,
+                ) as client,
+                client.get(
+                    "/fdsnws/station/1/query",
+                    params=params,
+                ) as response,
+            ):
+                logger.debug("Fetching available stations from %s", response.url)
+                try:
+                    response.raise_for_status()
+                except aiohttp.ClientResponseError as e:
+                    logger.error(
+                        "Failed to fetch stations from %s: %d %s error (%s)",
+                        self.url,
+                        e.status,
+                        get_error_str(e.status),
+                        e.message,
+                    )
+                data = await response.text()
+                if "Error 404" in data:
+                    logger.warning("No stations found for network: %s", network)
+                    continue
+
+                stations = parse_stations(data)
+                self.available_stations.extend(stations)
+                logger.info(
+                    "Fetched %d stations for network %s", stations.n_stations, network
                 )
-            data = await response.text()
-            self.available_stations = parse_stations(data)
 
         logger.info(
             "Got %d stations from %s",
