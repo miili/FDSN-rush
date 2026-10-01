@@ -13,6 +13,8 @@ uv run fdsn-rush download config.json -v  # -v = DEBUG logging, -m = metadata on
 uv run fdsn-rush convert in/ out-sds/ --steim 2 --network XX
 uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
+uv run --only-group docs zensical serve   # docs preview on localhost:8000
+uv run --only-group docs zensical build --clean --strict  # what CI runs
 ```
 
 If another virtualenv is active, `uv` ignores the project `.venv` and warns. Prefix commands with `env -u VIRTUAL_ENV` (or deactivate it).
@@ -20,6 +22,8 @@ If another virtualenv is active, `uv` ignores the project `.venv` and warns. Pre
 CI (`.github/workflows/`):
 - `pre-commit.yaml` runs the `.pre-commit-config.yaml` hooks through prek: ruff lint + format, plus whitespace/EOF/yaml checks.
 - `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.11–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
+- `docs.yaml` builds the docs strictly on every PR and push, and deploys `site/` to GitHub Pages from `main` only. The repo's Pages source must be set to "GitHub Actions".
+- `astral-sh/setup-uv` has no floating major tags. Pin a full version (`@v10.2.0`).
 
 Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py311` target from `requires-python`. Rules that bite:
 - `T20`: no `print`.
@@ -66,10 +70,27 @@ Tests are fully offline. `asyncio_mode = "auto"` is set, so `async def test_*` n
 
 Test modules import constants and types from `conftest` directly (`from conftest import STATION_TEXT`). When changing download, writer or rerun behaviour, extend `tests/test_manager.py::test_download`. It runs a full download twice and checks that the second run makes no new requests.
 
+## Documentation
+
+The user docs are built with [Zensical](https://zensical.org) (config in `zensical.toml`, pages in `docs/`) and published at https://miili.github.io/FDSN-rush/.
+- `docs/getting-started.md` is a walkthrough with real output from GEOFON (`GE.APE`, `GE.STU`).
+- `docs/guides/` holds task-oriented pages.
+- `docs/reference/` holds the configuration and CLI references.
+
+Style: professional and hands-on. Lead with the command or config snippet, keep the explanation short, and state behaviour exactly (e.g. the `time_range` end is exclusive). Verify examples against the code or a real run before documenting them.
+
+When you change behaviour, update the docs in the same change:
+- New or renamed config fields go into `docs/reference/configuration.md` as a `` `name` `` definition-list entry. `tests/test_docs.py` fails if a pydantic config field is missing.
+- CLI changes go into `docs/reference/cli.md`.
+- New pages must be added to `nav` in `zensical.toml`.
+
 ## Gotchas
 
 - `.venv` uses Python 3.14, which needs pyrocko ≥ 2026.6 and scipy ≥ 1.17 (older versions have no cp314 wheels and fail to build from source). If a sync tries to build scipy or pyrocko, upgrade the lock rather than installing system BLAS.
 - `Stats` instances register in a module-global registry, and `writer.FILE_LOCKS` is module-global too. Both are harmless in tests, but keep it in mind when you create many managers in one process.
 - `client.prepare()` appends to `available_stations`, so calling it twice on one client duplicates stations.
+- Clients download in parallel and each plans its work independently. Two clients serving the same station download the same day file concurrently into one `.partial` file. The docs warn about this, but it is not handled in code.
+- Config models use pydantic's default `extra="ignore"`, so misspelled options are silently dropped.
+- `convert` only scans files whose name contains a dot (`rglob("*.*")`). It appends to existing day files, so converting the same input twice duplicates data.
 - The git remote is `miili/fdsn-fetch` (the old name). The README badges point at `miili/FDSN-rush`.
 - The git remote is `miili/fdsn-fetch` (the old name). The README badges point at `miili/FDSN-rush`.
