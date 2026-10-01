@@ -199,6 +199,10 @@ class Stations(BaseModel):
         """Iterate over the stations."""
         return iter(self.stations)
 
+    def extend(self, stations: Stations):
+        """Append stations to the list."""
+        self.stations.extend(stations.stations)
+
     @property
     def n_stations(self) -> int:
         """Return the number of stations."""
