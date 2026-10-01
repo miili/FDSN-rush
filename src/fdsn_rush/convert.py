@@ -70,7 +70,7 @@ async def convert(
         start_day = tr_start.replace(hour=0, minute=0, second=0, microsecond=0)
         end_day = tr_end.replace(hour=0, minute=0, second=0, microsecond=0)
         current_day = start_day
-        while current_day < end_day:
+        while current_day <= end_day:
             with contextlib.suppress(NoData):
                 split_traces.append(
                     tr.chop(
@@ -159,10 +159,15 @@ async def convert_sds(
     )
 
     queue = asyncio.Queue(n_workers)
+    pending: set[asyncio.Task] = set()
     with Progress() as progress:
         task = progress.add_task("Processing", total=len(input_files))
         for path in input_files:
             t = asyncio.create_task(convert(path, output, network, steim))
+            pending.add(t)
+            t.add_done_callback(pending.discard)
             t.add_done_callback(lambda _: queue.get_nowait())
+            t.add_done_callback(lambda _: progress.update(task, advance=1))
             await queue.put(t)
-            progress.update(task, advance=1)
+        # Wait for the last batch, asyncio.run would cancel it otherwise
+        await asyncio.gather(*pending)
