@@ -13,26 +13,36 @@ FDSN Rush requires **Python 3.11 or newer**. Install it as a standalone command-
 === "uv"
 
     ```sh
-    uv tool install git+https://github.com/miili/FDSN-rush
+    uv tool install fdsn-rush
     ```
 
 === "pipx"
 
     ```sh
-    pipx install git+https://github.com/miili/FDSN-rush
+    pipx install fdsn-rush
     ```
 
 === "pip"
 
     ```sh
-    pip install git+https://github.com/miili/FDSN-rush
+    pip install fdsn-rush
     ```
 
 Check that the `fdsn-rush` command is available:
 
 ```sh
-fdsn-rush --help
+fdsn-rush --version
 ```
+
+To upgrade later, run `uv tool upgrade fdsn-rush`, `pipx upgrade fdsn-rush` or `pip install -U fdsn-rush`.
+
+??? note "Development version"
+
+    To try unreleased changes, install from the `main` branch:
+
+    ```sh
+    uv tool install git+https://github.com/miili/FDSN-rush
+    ```
 
 ## Create a configuration
 

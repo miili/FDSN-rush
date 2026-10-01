@@ -9,7 +9,7 @@ icon: lucide/house
 You describe *what* you want in one JSON file: data centres, stations, channels and a time range. FDSN Rush works out what is missing locally and downloads it concurrently. It writes clean day files and saves the matching station metadata next to them. Run the same command again tomorrow and it fetches only the new data.
 
 ```sh
-uv tool install git+https://github.com/miili/FDSN-rush
+uv tool install fdsn-rush
 fdsn-rush init > config.json
 fdsn-rush download config.json
 ```

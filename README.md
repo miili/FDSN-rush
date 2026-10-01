@@ -2,6 +2,7 @@
 
 *Fast and modern FDSN Download*
 
+[![PyPI](https://img.shields.io/pypi/v/fdsn-rush)](https://pypi.org/project/fdsn-rush/)
 [![Tests](https://github.com/miili/FDSN-rush/actions/workflows/tests.yaml/badge.svg)](https://github.com/miili/FDSN-rush/actions/workflows/tests.yaml)
 [![Documentation](https://github.com/miili/FDSN-rush/actions/workflows/docs.yaml/badge.svg)](https://miili.github.io/FDSN-rush/)
 [![Pre-commit](https://github.com/miili/FDSN-rush/actions/workflows/pre-commit.yaml/badge.svg)](https://github.com/miili/FDSN-rush/actions/workflows/pre-commit.yaml)
@@ -22,9 +23,9 @@
 Requires Python 3.11 or newer.
 
 ```sh
-uv tool install git+https://github.com/miili/FDSN-rush
+uv tool install fdsn-rush
 # or
-pip install git+https://github.com/miili/FDSN-rush
+pip install fdsn-rush
 ```
 
 ## Quick start
