@@ -1,9 +1,26 @@
 [project]
 name = "fdsn-rush"
-version = "0.1.0"
-description = "Fast and modern FDSN Download"
+dynamic = ["version"]
+description = "Fast and reliable download of seismic waveform data from FDSN web services into SDS archives"
 readme = "README.md"
-authors = [{ name = "miili", email = "marius.isken@gfz.de" }]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Marius Paul Isken", email = "marius.isken@gfz.de" }]
+maintainers = [{ name = "Marius Paul Isken", email = "marius.isken@gfz.de" }]
+keywords = ["seismology", "fdsn", "fdsnws", "miniseed", "sds", "eida", "download"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Physics",
+]
 requires-python = ">=3.11"
 dependencies = [
     "aiohttp>=3.12.14",
@@ -13,12 +30,30 @@ dependencies = [
     "typer>=0.16.0",
 ]
 
+[project.urls]
+Homepage = "https://miili.github.io/FDSN-rush/"
+Documentation = "https://miili.github.io/FDSN-rush/"
+Repository = "https://github.com/miili/FDSN-rush"
+Issues = "https://github.com/miili/FDSN-rush/issues"
+Releases = "https://github.com/miili/FDSN-rush/releases"
+
 [project.scripts]
 fdsn-rush = "fdsn_rush.app:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27", "hatch-vcs>=0.5"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+# Derived from the git tag, e.g. v0.2.0 -> 0.2.0
+source = "vcs"
+
+[tool.hatch.build.targets.sdist]
+include = ["src/", "tests/"]
+
+[tool.uv]
+# Rebuild the package when the git tag changes the version
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [dependency-groups]
 dev = ["prek>=0.3.5", "pytest>=8.4.1", "pytest-asyncio>=1.1.0", "ruff>=0.16.9"]

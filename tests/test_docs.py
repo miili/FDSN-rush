@@ -14,6 +14,9 @@ CONFIGURATION_DOCS = (
 )
 
 
+@pytest.mark.skipif(
+    not CONFIGURATION_DOCS.exists(), reason="docs are not part of the sdist"
+)
 @pytest.mark.parametrize("model", [FDSNDownloadManager, SDSWriter, FDSNClient])
 def test_configuration_documented(model: type[BaseModel]) -> None:
     """Every config option has an entry in the configuration reference."""

@@ -10,6 +10,7 @@ import typer
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
+from fdsn_rush import __version__
 from fdsn_rush.convert import convert_sds
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.stats import live_view
@@ -28,6 +29,27 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,
 )
+
+
+def _print_version(value: bool) -> None:
+    if value:
+        rich.print(f"fdsn-rush {__version__}")
+        raise typer.Exit
+
+
+@app.callback()
+def _main(
+    version: Annotated[
+        bool,
+        typer.Option(
+            "--version",
+            callback=_print_version,
+            is_eager=True,
+            help="Show the version and exit.",
+        ),
+    ] = False,
+) -> None:
+    """Fast and modern FDSN Download"""
 
 
 @app.command()
