@@ -11,11 +11,13 @@ from fdsn_rush.utils import (
     NSL,
     NSLC,
     Date,
+    FilePath,
     date_today,
     human_readable_bytes,
     wait_for_path,
 )
 
+FILE_PATH_ADAPTER = TypeAdapter(FilePath)
 NSL_ADAPTER = TypeAdapter(NSL)
 DATE_ADAPTER = TypeAdapter(Date)
 
@@ -96,3 +98,14 @@ async def test_wait_for_path(tmp_path: Path) -> None:
 
     with pytest.raises(FileNotFoundError):
         await wait_for_path(tmp_path / "missing", timeout=0.1)
+
+
+def test_file_path_expands_user(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".eidatoken").touch()
+
+    assert FILE_PATH_ADAPTER.validate_python("~/.eidatoken") == tmp_path / ".eidatoken"
+    with pytest.raises(ValidationError, match="does not exist"):
+        FILE_PATH_ADAPTER.validate_python("~/missing")

@@ -69,9 +69,10 @@ ByteSizeStr = Annotated[
 
 def _expand_path(value: Path) -> Path:
     """Expand a path, resolving user and relative paths."""
-    if not value.exists():
-        raise FileNotFoundError(f"Path {value} does not exist.")
-    return value.expanduser().resolve()
+    path = value.expanduser().resolve()
+    if not path.exists():
+        raise ValueError(f"Path {value} does not exist.")
+    return path
 
 
 FilePath = Annotated[
