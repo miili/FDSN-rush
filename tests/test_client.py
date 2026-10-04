@@ -18,33 +18,44 @@ async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
 
     await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
 
-    networks = [req["network"] for req in fake_fdsn.station_requests]
-    assert sorted(networks) == ["XX", "YY"]
-    request = fake_fdsn.station_requests[0]
-    assert request["starttime"] == "2024-01-01T00:00:00"
-    assert request["endtime"] == "2024-01-03T00:00:00"
+    requests = fake_fdsn.station_requests
+    assert len(requests) == 2
+    assert requests[0]["options"] == {
+        "level": "channel",
+        "format": "text",
+        "nodata": "404",
+    }
+    assert requests[0]["selection"] == [
+        ["XX", "STA01", "*", "*", "2024-01-01T00:00:00", "2024-01-03T00:00:00"],
+        ["XX", "STA02", "*", "*", "2024-01-01T00:00:00", "2024-01-03T00:00:00"],
+    ]
+    assert [r["selection"][0][0] for r in requests] == ["XX", "YY"]
 
 
-async def test_prepare_wildcard_selection_omits_parameter(
-    fake_fdsn: FakeFDSN,
-) -> None:
-    """An empty location is a wildcard, ",00" would only match blank and 00."""
+async def test_prepare_keeps_selections_apart(fake_fdsn: FakeFDSN) -> None:
+    """One line per selection: no cross product, a wildcard stays a wildcard."""
     client = FDSNClient(url=fake_fdsn.url)
-    selection = [NSL.parse("XX.STA01."), NSL.parse("XX.STA01.00")]
+    selection = [NSL.parse("XX.STA01."), NSL.parse("XX.STA02.10")]
 
     await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
 
     (request,) = fake_fdsn.station_requests
-    assert "location" not in request
-    assert request["station"] == "STA01"
+    assert [line[:4] for line in request["selection"]] == [
+        ["XX", "STA01", "*", "*"],
+        ["XX", "STA02", "10", "*"],
+    ]
 
 
-async def test_prepare_joins_explicit_codes(fake_fdsn: FakeFDSN) -> None:
+async def test_download_metadata_is_one_post(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
-    selection = [NSL.parse("XX.STA02.10"), NSL.parse("XX.STA01.00")]
+    selection = [NSL.parse("XX.STA*"), NSL.parse("XX.STA03.00")]
 
-    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+    data = await client.download_metadata(selection, date(2024, 1, 1), date(2024, 1, 3))
 
+    assert data == "<FDSNStationXML/>"
     (request,) = fake_fdsn.station_requests
-    assert request["station"] == "STA01,STA02"
-    assert request["location"] == "00,10"
+    assert request["options"]["level"] == "response"
+    assert [line[:3] for line in request["selection"]] == [
+        ["XX", "STA*", "*"],
+        ["XX", "STA03", "00"],
+    ]

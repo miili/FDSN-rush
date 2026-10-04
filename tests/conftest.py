@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, time
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -83,7 +84,7 @@ class FakeFDSN:
     def __init__(self, server: TestServer) -> None:
         self.server = server
         self.dataselect_requests: list[dict[str, str]] = []
-        self.station_requests: list[dict[str, str]] = []
+        self.station_requests: list[dict[str, Any]] = []
 
     @property
     def url(self) -> str:
@@ -95,8 +96,21 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
     """A local FDSN web service serving STATION_TEXT and synthetic waveforms."""
 
     async def station(request: web.Request) -> web.Response:
-        fake.station_requests.append(dict(request.query))
-        if request.query.get("format") == "xml":
+        # Station requests are POSTed: "key=value" lines, then one
+        # "NET STA LOC CHA START END" line per selection.
+        options: dict[str, str] = {}
+        selection: list[list[str]] = []
+        for line in (await request.text()).splitlines():
+            if "=" in line:
+                key, _, value = line.partition("=")
+                options[key] = value
+            elif line.strip():
+                fields = line.split()
+                if len(fields) != 6:
+                    raise web.HTTPBadRequest(text=f"Error 400: bad line {line!r}")
+                selection.append(fields)
+        fake.station_requests.append({"options": options, "selection": selection})
+        if options.get("format") == "xml":
             return web.Response(text="<FDSNStationXML/>")
         return web.Response(text=STATION_TEXT)
 
@@ -124,7 +138,7 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
         return web.Response(body=make_mseed(nslc, day))
 
     app = web.Application()
-    app.router.add_get("/fdsnws/station/1/query", station)
+    app.router.add_post("/fdsnws/station/1/query", station)
     app.router.add_get("/fdsnws/dataselect/1/query", dataselect)
 
     server = TestServer(app)

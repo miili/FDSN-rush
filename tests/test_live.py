@@ -38,3 +38,10 @@ async def test_wildcard_location_matches_all(url: str) -> None:
     if "iris" in url:
         # IU.ANMO has 00, 10, 20, ...; ",00" would return 00 only
         assert {"00", "10"} <= locations
+
+
+async def test_metadata_post() -> None:
+    client = FDSNClient(url="https://geofon.gfz.de")
+    data = await client.download_metadata([NSL.parse("GE.APE")], *DAY)
+
+    assert "FDSNStationXML" in data
