@@ -73,9 +73,8 @@ Spec errata (the PDFs contradict themselves; do not copy these):
 - The bounding-box example's prose says longitude 112, but its URL uses `minlongitude=122`.
 
 Differences between the code and the spec, to check when working on `client.py`:
-- Blank location codes: `_clean_params` drops empty values, so a channel with location `""` sends no `location` at all. Without a `location` parameter the server matches any location code, so `NET.STA..HHZ` may also pull `00`/`10` data into the blank-location day file. The spec says to send `--`. This is likely a real bug, and the fake server in `tests/conftest.py` hides it (`query.get("location", "")`).
-- Times are sent as dates only (`2024-01-01`, from `date.isoformat()`). Every spec example uses `YYYY-MM-DDTHH:MM:SS`.
-- The code sends `format=mseed` for dataselect. The spec value is `miniseed`. A strict server may reject it.
+- Fixed: waveform requests send a blank location as `--`, times as `YYYY-MM-DDTHH:MM:SS` (`_fdsn_time`) and `format=miniseed`, and inventory requests group by sorted network so each network is queried once. The fake server in `tests/conftest.py` rejects anything else with 400, so a regression fails `test_download`.
+- Inventory queries (`prepare`, `download_metadata`) still drop empty `location` values via `_clean_params`. That is intended for wildcard selections, but a mixed set like `{"", "00"}` joins to `",00"`.
 - Inventory queries use GET with comma-joined `station` and `location` lists per network. Servers must also accept POST (station changelog), which is the documented way to send large selections. Long GET lists risk 414/413.
 - Not used so far: `quality`, `minimumlength`, `longestonly`, `updatedafter`, `matchtimeseries`, `includerestricted`, `includeavailability`, geographic filters and the `version` method.
 - Not in the spec at all: `/fdsnws/dataselect/1/auth` (EIDA token exchange) and the `X-RateLimit-Limit` header. 429 appears only as a label in `ERRORS`, and nothing retries it.

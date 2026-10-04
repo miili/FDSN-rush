@@ -64,6 +64,11 @@ def _clean_params(params: dict[str, Any]) -> None:
             params.pop(key, None)
 
 
+def _fdsn_time(day: date) -> str:
+    """Format a date as the FDSN time string for midnight UTC, e.g. 2024-01-01T00:00:00."""
+    return datetime.combine(day, time(), tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
 def get_error_str(error_code: int) -> str:
     """Return a human-readable error message based on the error code."""
     return ERRORS.get(error_code, f"Error {error_code}")
@@ -258,25 +263,12 @@ class FDSNClient(BaseModel):
         """Fetch available stations from the FDSN service."""
         self._stats.set_client(self)
 
-        networks = {nsl.network for nsl in selection}
-        stations = {nsl.station for nsl in selection}
-        locations = {nsl.location for nsl in selection}
-
-        params = {
-            "network": ",".join(networks),
-            "station": ",".join(stations),
-            "location": ",".join(locations),
-            "starttime": starttime.isoformat(),
-            "endtime": endtime.isoformat(),
-            "level": "channel",
-            "format": "text",
-            "nodata": "404",
-        }
-        _clean_params(params)
-
         logger.info("Preparing FDSN service: %s", self.url)
 
-        for network, nsls in groupby(selection, key=lambda nsl: nsl.network):
+        for network, nsls in groupby(
+            sorted(selection, key=lambda nsl: nsl.network),
+            key=lambda nsl: nsl.network,
+        ):
             nsls = list(nsls)
             networks = {nsl.network for nsl in nsls}
             stations = {nsl.station for nsl in nsls}
@@ -286,8 +278,8 @@ class FDSNClient(BaseModel):
                 "network": ",".join(networks),
                 "station": ",".join(stations),
                 "location": ",".join(locations),
-                "starttime": starttime.isoformat(),
-                "endtime": endtime.isoformat(),
+                "starttime": _fdsn_time(starttime),
+                "endtime": _fdsn_time(endtime),
                 "level": "channel",
                 "format": "text",
                 "nodata": "404",
@@ -398,8 +390,8 @@ class FDSNClient(BaseModel):
             "network": ",".join(networks),
             "station": ",".join(stations),
             "location": ",".join(locations),
-            "starttime": starttime.isoformat(),
-            "endtime": endtime.isoformat(),
+            "starttime": _fdsn_time(starttime),
+            "endtime": _fdsn_time(endtime),
             "level": "response",
             "format": "xml",
             "nodata": "404",
@@ -437,11 +429,12 @@ class FDSNClient(BaseModel):
         params = {
             "network": channel.nsl.network,
             "station": channel.nsl.station,
-            "location": channel.nsl.location,
+            # A blank location code must be sent as "--"; omitting it matches any location
+            "location": channel.nsl.location or "--",
             "channel": channel.code,
-            "starttime": date.isoformat(),
-            "endtime": (date + timedelta(days=1)).isoformat(),
-            "format": "mseed",
+            "starttime": _fdsn_time(date),
+            "endtime": _fdsn_time(date + timedelta(days=1)),
+            "format": "miniseed",
             "nodata": "404",
         }
         _clean_params(params)
