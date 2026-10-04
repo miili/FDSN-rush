@@ -109,6 +109,13 @@ async def test_download(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
     n_requests = len(fake_fdsn.dataselect_requests)
     assert n_requests == 12
 
+    # Wire format: blank location as "--", full timestamps, miniseed
+    request = fake_fdsn.dataselect_requests[0]
+    assert request["location"] == "--"
+    assert request["format"] == "miniseed"
+    assert request["starttime"].endswith("T00:00:00")
+    assert request["endtime"].endswith("T00:00:00")
+
     # Re-running skips archived dayfiles and logged 404s
     manager = _manager(tmp_path, fake_fdsn.url)
     await manager.download()

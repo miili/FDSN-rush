@@ -83,6 +83,7 @@ class FakeFDSN:
     def __init__(self, server: TestServer) -> None:
         self.server = server
         self.dataselect_requests: list[dict[str, str]] = []
+        self.station_requests: list[dict[str, str]] = []
 
     @property
     def url(self) -> str:
@@ -94,6 +95,7 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
     """A local FDSN web service serving STATION_TEXT and synthetic waveforms."""
 
     async def station(request: web.Request) -> web.Response:
+        fake.station_requests.append(dict(request.query))
         if request.query.get("format") == "xml":
             return web.Response(text="<FDSNStationXML/>")
         return web.Response(text=STATION_TEXT)
@@ -101,15 +103,24 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
     async def dataselect(request: web.Request) -> web.Response:
         query = request.query
         fake.dataselect_requests.append(dict(query))
-        nslc = (
-            query["network"],
-            query["station"],
-            query.get("location", ""),
-            query["channel"],
-        )
+        # Be as strict as a real server: all selection parameters are mandatory,
+        # a blank location is "--", times are full timestamps and the format is
+        # "miniseed".
+        for key in ("network", "station", "location", "channel"):
+            if key not in query:
+                raise web.HTTPBadRequest(text=f"Error 400: missing {key}")
+        if query.get("format", "miniseed") != "miniseed":
+            raise web.HTTPBadRequest(text="Error 400: unsupported format")
+        try:
+            start = datetime.strptime(query["starttime"], "%Y-%m-%dT%H:%M:%S")  # noqa: DTZ007
+            datetime.strptime(query["endtime"], "%Y-%m-%dT%H:%M:%S")  # noqa: DTZ007
+        except (KeyError, ValueError):
+            raise web.HTTPBadRequest(text="Error 400: bad time") from None
+        location = "" if query["location"] == "--" else query["location"]
+        nslc = (query["network"], query["station"], location, query["channel"])
         if nslc in MISSING_NSLC:
             raise web.HTTPNotFound(text="Error 404: no data")
-        day = date.fromisoformat(query["starttime"])
+        day = start.date()
         return web.Response(body=make_mseed(nslc, day))
 
     app = web.Application()
