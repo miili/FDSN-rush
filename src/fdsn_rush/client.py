@@ -69,17 +69,26 @@ def _fdsn_time(day: date) -> str:
     return datetime.combine(day, time(), tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S")
 
 
-def _join_codes(codes: Iterable[str]) -> str:
-    """Join selector codes into one FDSN parameter value.
+def _post_body(
+    options: dict[str, str],
+    selection: Iterable[NSL],
+    starttime: date,
+    endtime: date,
+) -> str:
+    """Build the body of a station POST request.
 
-    An empty selector part is a wildcard. A server reads an empty entry in a list
-    as the blank code (``",00"`` only matches blank and ``00``), so one wildcard
-    makes the whole list a wildcard and the parameter is left out (``""``).
+    Options are ``key=value`` lines followed by one ``NET STA LOC CHA START END``
+    line per selection. An empty selector part is a wildcard, so it becomes ``*``.
+    A list of lines, unlike comma-joined GET parameters, does not turn
+    ``A.1`` + ``B.2`` into the cross product ``A,B`` x ``1,2``.
     """
-    unique = set(codes)
-    if "" in unique or "*" in unique:
-        return ""
-    return ",".join(sorted(unique))
+    start, end = _fdsn_time(starttime), _fdsn_time(endtime)
+    lines = [f"{key}={value}" for key, value in options.items()]
+    lines.extend(
+        f"{nsl.network or '*'} {nsl.station or '*'} {nsl.location or '*'} * {start} {end}"
+        for nsl in sorted(set(selection))
+    )
+    return "\n".join(lines) + "\n"
 
 
 def get_error_str(error_code: int) -> str:
@@ -282,22 +291,12 @@ class FDSNClient(BaseModel):
             sorted(selection, key=lambda nsl: nsl.network),
             key=lambda nsl: nsl.network,
         ):
-            nsls = list(nsls)
-            networks = {nsl.network for nsl in nsls}
-            stations = {nsl.station for nsl in nsls}
-            locations = {nsl.location for nsl in nsls}
-
-            params = {
-                "network": _join_codes(networks),
-                "station": _join_codes(stations),
-                "location": _join_codes(locations),
-                "starttime": _fdsn_time(starttime),
-                "endtime": _fdsn_time(endtime),
-                "level": "channel",
-                "format": "text",
-                "nodata": "404",
-            }
-            _clean_params(params)
+            body = _post_body(
+                {"level": "channel", "format": "text", "nodata": "404"},
+                nsls,
+                starttime,
+                endtime,
+            )
 
             async with (
                 aiohttp.ClientSession(
@@ -305,9 +304,9 @@ class FDSNClient(BaseModel):
                     timeout=aiohttp.ClientTimeout(total=self.timeout),
                     headers=HEADERS,
                 ) as client,
-                client.get(
+                client.post(
                     "/fdsnws/station/1/query",
-                    params=params,
+                    data=body,
                 ) as response,
             ):
                 logger.debug("Fetching available stations from %s", response.url)
@@ -395,21 +394,12 @@ class FDSNClient(BaseModel):
         """Fetch available stations from the FDSN service."""
         self._stats.set_client(self)
 
-        networks = {nsl.network for nsl in selection}
-        stations = {nsl.station for nsl in selection}
-        locations = {nsl.location for nsl in selection}
-
-        params = {
-            "network": _join_codes(networks),
-            "station": _join_codes(stations),
-            "location": _join_codes(locations),
-            "starttime": _fdsn_time(starttime),
-            "endtime": _fdsn_time(endtime),
-            "level": "response",
-            "format": "xml",
-            "nodata": "404",
-        }
-        _clean_params(params)
+        body = _post_body(
+            {"level": "response", "format": "xml", "nodata": "404"},
+            selection,
+            starttime,
+            endtime,
+        )
 
         async with (
             aiohttp.ClientSession(
@@ -417,9 +407,9 @@ class FDSNClient(BaseModel):
                 timeout=aiohttp.ClientTimeout(sock_read=self.timeout),
                 headers=HEADERS,
             ) as client,
-            client.get(
+            client.post(
                 "/fdsnws/station/1/query",
-                params=params,
+                data=body,
             ) as response,
         ):
             response.raise_for_status()
