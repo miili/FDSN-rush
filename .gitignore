@@ -11,3 +11,7 @@ wheels/
 
 # Documentation build
 site/
+
+# Reference specs (fetched with reference/justfile)
+reference/*.pdf
+reference/*.txt
