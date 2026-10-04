@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from itertools import groupby
@@ -67,6 +67,19 @@ def _clean_params(params: dict[str, Any]) -> None:
 def _fdsn_time(day: date) -> str:
     """Format a date as the FDSN time string for midnight UTC, e.g. 2024-01-01T00:00:00."""
     return datetime.combine(day, time(), tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def _join_codes(codes: Iterable[str]) -> str:
+    """Join selector codes into one FDSN parameter value.
+
+    An empty selector part is a wildcard. A server reads an empty entry in a list
+    as the blank code (``",00"`` only matches blank and ``00``), so one wildcard
+    makes the whole list a wildcard and the parameter is left out (``""``).
+    """
+    unique = set(codes)
+    if "" in unique or "*" in unique:
+        return ""
+    return ",".join(sorted(unique))
 
 
 def get_error_str(error_code: int) -> str:
@@ -275,9 +288,9 @@ class FDSNClient(BaseModel):
             locations = {nsl.location for nsl in nsls}
 
             params = {
-                "network": ",".join(networks),
-                "station": ",".join(stations),
-                "location": ",".join(locations),
+                "network": _join_codes(networks),
+                "station": _join_codes(stations),
+                "location": _join_codes(locations),
                 "starttime": _fdsn_time(starttime),
                 "endtime": _fdsn_time(endtime),
                 "level": "channel",
@@ -387,9 +400,9 @@ class FDSNClient(BaseModel):
         locations = {nsl.location for nsl in selection}
 
         params = {
-            "network": ",".join(networks),
-            "station": ",".join(stations),
-            "location": ",".join(locations),
+            "network": _join_codes(networks),
+            "station": _join_codes(stations),
+            "location": _join_codes(locations),
             "starttime": _fdsn_time(starttime),
             "endtime": _fdsn_time(endtime),
             "level": "response",
