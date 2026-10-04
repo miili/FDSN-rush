@@ -74,7 +74,8 @@ Spec errata (the PDFs contradict themselves; do not copy these):
 
 Differences between the code and the spec, to check when working on `client.py`:
 - Fixed: waveform requests send a blank location as `--`, times as `YYYY-MM-DDTHH:MM:SS` (`_fdsn_time`) and `format=miniseed`, and inventory requests group by sorted network so each network is queried once. The fake server in `tests/conftest.py` rejects anything else with 400, so a regression fails `test_download`.
-- Inventory queries (`prepare`, `download_metadata`) still drop empty `location` values via `_clean_params`. That is intended for wildcard selections, but a mixed set like `{"", "00"}` joins to `",00"`.
+- Fixed: inventory queries build `network`/`station`/`location` with `_join_codes`. An empty or `*` part is a wildcard, so the parameter is omitted. Verified on IRIS: `location=,00` returns only `00` for `IU.ANMO` (an empty list entry is the *blank* code), omitting it returns every location. GEOFON treats all spellings alike.
+- Real servers: IRIS 301-redirects http and answers `location=` (empty) and `--` with blank-location channels only. Live checks are in `tests/test_live.py`.
 - Inventory queries use GET with comma-joined `station` and `location` lists per network. Servers must also accept POST (station changelog), which is the documented way to send large selections. Long GET lists risk 414/413.
 - Not used so far: `quality`, `minimumlength`, `longestonly`, `updatedafter`, `matchtimeseries`, `includerestricted`, `includeavailability`, geographic filters and the `version` method.
 - Not in the spec at all: `/fdsnws/dataselect/1/auth` (EIDA token exchange) and the `X-RateLimit-Limit` header. 429 appears only as a label in `ERRORS`, and nothing retries it.
@@ -82,7 +83,7 @@ Differences between the code and the spec, to check when working on `client.py`:
 
 ## Tests
 
-Tests are fully offline. `asyncio_mode = "auto"` is set, so `async def test_*` needs no marker. Shared fixtures are in `tests/conftest.py`:
+Tests are offline, except `tests/test_live.py`, which hits IRIS/GEOFON and only runs with `FDSN_RUSH_LIVE=1`. `asyncio_mode = "auto"` is set, so `async def test_*` needs no marker. Shared fixtures are in `tests/conftest.py`:
 - `STATION_TEXT`: an inline FDSN station text inventory. It covers the cases the manager must handle:
   - STA01: HH channels, plus an LH channel with too low a sampling rate and an aux LDO channel.
   - STA02: EH channels only; the fake server returns 404 for EHE.
