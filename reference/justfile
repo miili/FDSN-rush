@@ -1,0 +1,32 @@
+# Download the FDSN web service specs and convert them to text.
+# Output is git-ignored (see ../.gitignore). Needs: curl, pdftotext (poppler-utils).
+# The Commonalities spec has no stable PDF URL on fdsn.org, so it is not fetched.
+
+base := "https://www.fdsn.org/webservices"
+specs := "fdsnws-station-1.1 fdsnws-dataselect-1.1"
+
+default: convert
+
+# Fetch the PDFs (skips files that already exist)
+download:
+    #!/usr/bin/env sh
+    set -eu
+    command -v curl >/dev/null || { echo "error: curl not found, install curl" >&2; exit 1; }
+    for s in {{ specs }}; do
+        [ -f "$s.pdf" ] && continue
+        curl -fsSL -o "$s.pdf.tmp" "{{ base }}/$s.pdf"
+        mv "$s.pdf.tmp" "$s.pdf"
+    done
+
+# Convert the PDFs to layout-preserving text (grep-friendly)
+convert: download
+    #!/usr/bin/env sh
+    set -eu
+    command -v pdftotext >/dev/null || { echo "error: pdftotext not found, install poppler-utils" >&2; exit 1; }
+    for s in {{ specs }}; do
+        pdftotext -layout "$s.pdf" "$s.txt"
+    done
+
+# Remove downloaded and converted files
+clean:
+    rm -f *.pdf *.pdf.tmp *.txt

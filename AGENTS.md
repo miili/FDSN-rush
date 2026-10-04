@@ -15,6 +15,7 @@ uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
 uv run --only-group docs zensical serve   # docs preview on localhost:8000
 uv run --only-group docs zensical build --clean --strict  # what CI runs
+(cd reference && just)                    # fetch FDSN spec PDFs + .txt (needs just, curl, pdftotext)
 ```
 
 If another virtualenv is active, `uv` ignores the project `.venv` and warns. Prefix commands with `env -u VIRTUAL_ENV` (or deactivate it).
@@ -58,6 +59,27 @@ All modules are in `src/fdsn_rush/`.
 - Blocking pyrocko and file I/O is wrapped in `asyncio.to_thread`.
 - Validators raise `ValueError`, never `TypeError`. pydantic v2 only turns `ValueError`/`AssertionError` into a `ValidationError`, so `TRY004` is silenced there with `noqa`.
 - Commit messages are lowercase `<area>: <summary>`, e.g. `writer: fix short trace logging spam`, `client: no data bugfix`.
+
+## FDSN protocol notes
+
+The specs are `fdsnws-station-1.1` and `fdsnws-dataselect-1.1`. Fetch them with `cd reference && just` (git-ignored), then `grep` the `.txt` files. `reference/NOTES.md` summarizes the parameters, defaults and text-format columns. In the spec tables, the "Support" column (required/optional) says what a *server* must implement, not what a client must send.
+
+Spec errata (the PDFs contradict themselves; do not copy these):
+- The station table lists the `format` default as `text`, but the prose says StationXML (`xml`) is the default. `xml` is correct.
+- The station table gives the `maxlongitude` default as `108.0`; it should be `180.0`.
+- The station POST example has an end time before its start time.
+- The station changelog mentions a "page 12" for the text template. The PDF has 9 pages.
+- The channel text template calls a column `ScaleFrequency`, but the example header says `ScaleFreq`. The code ignores header names.
+- The bounding-box example's prose says longitude 112, but its URL uses `minlongitude=122`.
+
+Differences between the code and the spec, to check when working on `client.py`:
+- Blank location codes: `_clean_params` drops empty values, so a channel with location `""` sends no `location` at all. Without a `location` parameter the server matches any location code, so `NET.STA..HHZ` may also pull `00`/`10` data into the blank-location day file. The spec says to send `--`. This is likely a real bug, and the fake server in `tests/conftest.py` hides it (`query.get("location", "")`).
+- Times are sent as dates only (`2024-01-01`, from `date.isoformat()`). Every spec example uses `YYYY-MM-DDTHH:MM:SS`.
+- The code sends `format=mseed` for dataselect. The spec value is `miniseed`. A strict server may reject it.
+- Inventory queries use GET with comma-joined `station` and `location` lists per network. Servers must also accept POST (station changelog), which is the documented way to send large selections. Long GET lists risk 414/413.
+- Not used so far: `quality`, `minimumlength`, `longestonly`, `updatedafter`, `matchtimeseries`, `includerestricted`, `includeavailability`, geographic filters and the `version` method.
+- Not in the spec at all: `/fdsnws/dataselect/1/auth` (EIDA token exchange) and the `X-RateLimit-Limit` header. 429 appears only as a label in `ERRORS`, and nothing retries it.
+- Text-format times have no zone, so `Channel.from_line` produces naive datetimes. That is harmless while only `.date()` is compared.
 
 ## Tests
 
@@ -104,5 +126,4 @@ When you change behaviour, update the docs in the same change:
 - Clients download in parallel and each plans its work independently. Two clients serving the same station download the same day file concurrently into one `.partial` file. The docs warn about this, but it is not handled in code.
 - Config models use pydantic's default `extra="ignore"`, so misspelled options are silently dropped.
 - `convert` only scans files whose name contains a dot (`rglob("*.*")`). It appends to existing day files, so converting the same input twice duplicates data.
-- The git remote is `miili/fdsn-fetch` (the old name). The README badges point at `miili/FDSN-rush`.
 - The git remote is `miili/fdsn-fetch` (the old name). The README badges point at `miili/FDSN-rush`.
