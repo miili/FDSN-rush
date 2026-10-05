@@ -32,6 +32,7 @@ from fdsn_rush.utils import (
     FilePath,
     datetime_now,
     human_readable_bytes,
+    report,
 )
 
 if TYPE_CHECKING:
@@ -609,6 +610,7 @@ class FDSNClient(BaseModel):
             self.url,
             self.n_workers,
         )
+        report("downloading", self.url)
 
         rate_limit_task = asyncio.create_task(rate_limit_timer())
         middleware = await self._get_auth_middlewares()

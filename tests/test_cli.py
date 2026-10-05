@@ -14,6 +14,7 @@ from conftest import FakeFDSN
 from pydantic import HttpUrl
 from typer.testing import CliRunner
 
+from fdsn_rush import utils
 from fdsn_rush.app import app
 from fdsn_rush.client import FDSNClient
 from fdsn_rush.manager import FDSNDownloadManager
@@ -23,10 +24,11 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def _restore_root_logging() -> Iterator[None]:
-    """`download` adds a file handler to the root logger, like a real process would."""
+def _restore_global_state() -> Iterator[None]:
+    """`download` adds a log file handler and sets `utils.NON_INTERACTIVE`, as a process would."""
     handlers = logging.root.handlers[:]
     yield
+    utils.NON_INTERACTIVE = False
     for handler in logging.root.handlers[len(handlers) :]:
         handler.close()
     logging.root.handlers = handlers
@@ -67,6 +69,7 @@ async def test_non_interactive_downloads_one_day(
     report = _report(result.stdout)
     assert report["status"] == "ok"
     assert "error" not in report
+    assert report["downloading"] == fake_fdsn.url
     assert report["files"] == "3"
     assert report["failed"] == "0"
     assert result.stderr == ""  # quiet: details are in the log file

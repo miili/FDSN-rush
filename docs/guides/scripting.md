@@ -18,12 +18,16 @@ echo $?
 ```text
 log_file: data/fdsn-rush.log
 stats_file: data/fdsn-rush-stats.json
+downloading: https://geofon.gfz.de/
 files: 3
 no_data: 0
 failed: 0
 elapsed: 4.4s
 status: ok
 ```
+
+`downloading`
+:   A server that is being downloaded from. One line per server.
 
 `files`
 :   Dayfiles saved in this run.

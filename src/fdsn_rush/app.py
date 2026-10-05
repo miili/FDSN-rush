@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -11,10 +10,11 @@ import typer
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
-from fdsn_rush import __version__
+from fdsn_rush import __version__, utils
 from fdsn_rush.convert import convert_sds
 from fdsn_rush.manager import LOG_FILE_NAME, STATS_FILE_NAME, FDSNDownloadManager
 from fdsn_rush.stats import live_view
+from fdsn_rush.utils import report
 
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -95,13 +95,9 @@ def download(
 ) -> None:
     """Download data from FDSN to local SDS archive."""
 
-    def report(key: str, value: object) -> None:
-        """Print `key: value`. This is all `--non-interactive` prints."""
-        if non_interactive:
-            sys.stdout.write(f"{key}: {' '.join(str(value).split())}\n")
-
     logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
     if non_interactive:
+        utils.NON_INTERACTIVE = True
         rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
 
     try:

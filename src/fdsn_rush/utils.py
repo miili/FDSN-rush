@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 from datetime import UTC, date, datetime, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
@@ -17,6 +18,15 @@ from pydantic import (
 )
 
 logger = logging.getLogger(__name__)
+
+NON_INTERACTIVE = False  # set by `download --non-interactive`
+
+
+def report(key: str, value: object) -> None:
+    """Print `key: value`. This is all `download --non-interactive` prints."""
+    if NON_INTERACTIVE:
+        sys.stdout.write(f"{key}: {' '.join(str(value).split())}\n")
+
 
 DATETIME_MAX = datetime.max.replace(tzinfo=UTC)
 DATETIME_MIN = datetime.min.replace(tzinfo=UTC)
