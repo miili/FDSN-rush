@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import TypeAdapter, ValidationError
 
+from fdsn_rush import utils
 from fdsn_rush.utils import (
     _NSL,
     NSL,
@@ -109,3 +110,14 @@ def test_file_path_expands_user(
     assert FILE_PATH_ADAPTER.validate_python("~/.eidatoken") == tmp_path / ".eidatoken"
     with pytest.raises(ValidationError, match="does not exist"):
         FILE_PATH_ADAPTER.validate_python("~/missing")
+
+
+def test_report(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    utils.report("key", "value")
+    assert capsys.readouterr().out == ""  # silent unless --non-interactive
+
+    monkeypatch.setattr(utils, "NON_INTERACTIVE", True)
+    utils.report("error", "line one\n  line two")
+    assert capsys.readouterr().out == "error: line one line two\n"

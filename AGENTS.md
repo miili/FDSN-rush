@@ -9,7 +9,10 @@ Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling 
 ```sh
 uv sync                                   # install incl. dev group (pytest, pytest-asyncio, ruff, prek)
 uv run fdsn-rush init > config.json       # dump default config
-uv run fdsn-rush download config.json -v  # -v = DEBUG logging, -m = metadata only
+uv run fdsn-rush download config.json -v  # -v = DEBUG logging
+uv run fdsn-rush metadata config.json    # inventory + StationXML only
+uv run fdsn-rush check config.json       # validate the config only
+uv run fdsn-rush download config.json -n  # non-interactive: only key: value lines on stdout
 uv run fdsn-rush convert in/ out-sds/ --steim 2 --network XX
 uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
@@ -40,8 +43,8 @@ The prek hook pins a newer ruff (v0.16) than older dev installs. Trust `prek run
 
 All modules are in `src/fdsn_rush/`.
 
-- `app.py`: Typer CLI (`init`, `download`, `convert`). `download` runs `FDSNDownloadManager.download()` alongside `stats.live_view()` in one asyncio loop.
-- `manager.py`: `FDSNDownloadManager` (pydantic model) **is** the JSON config schema. `load()` validates with `strict=True`. Flow: `prepare()` (clients fetch station inventory, writer scans the archive) → `download_metadata()` (StationXML per network into `metadata_path/<NET>.xml`) → per client `get_work()` → `client.download(writer)`. Clients run concurrently in a `TaskGroup`.
+- `app.py`: Typer CLI (`init`, `check`, `metadata`, `download`, `convert`). `download` loads the config, adds a file handler for `<config>.log` (next to the config file) to the root logger, runs `manager.download()` with `stats.live_view()`, then prints the summary and exits with `EXIT_CODES[status]` (0 ok, 1 error, 2 partial). `-n` sets `utils.NON_INTERACTIVE` and `rich.reconfigure(quiet=True)`, which also hides the live view. `metadata` runs `manager.download(metadata_only=True)`; `check` only loads (validates) the config.
+- `manager.py`: `FDSNDownloadManager` (pydantic model) **is** the JSON config schema. `load()` validates with `strict=True`. Flow: `prepare()` (clients fetch station inventory, writer scans the archive) → `download_metadata()` (StationXML per network into `metadata_path/<NET>.xml`) → per client `get_work()` → `client.download(writer)`. Clients run concurrently in a `TaskGroup`. `download()` rewrites `<sds_archive>/fdsn-rush-stats.json` (a `StatsReport`, atomic) at the start, at the end and whenever a client sets the shared `_file_done` event (once per finished work item). Non-interactive output goes through `utils.report(key, value)`, a no-op unless `utils.NON_INTERACTIVE` is set; call it from any module. Keep it to a few lines: agents pay for every token. `status:` is always last.
   - `get_work()` builds one `DownloadDayfile` per channel per day. `channel_priority` is an ordered list of fnmatch patterns, and the first pattern that yields `>= min_channels_per_station` channels wins for that station-day. Dayfiles already present in the archive are skipped.
 - `client.py`: `FDSNClient` does all HTTP via aiohttp against `/fdsnws/station/1/query` (inventory: one POSTed text-format request per network, merged with `Stations.extend`, and a body containing `Error 404` is treated as "no stations"; metadata: StationXML, also POSTed) and `/fdsnws/dataselect/1/query` (or `queryauth` with an EIDA token → digest auth middleware). Downloads use an `asyncio.Queue` of dayfiles, `n_workers` workers, and a rate limiter (`asyncio.Condition` ticked at `rate_limit` Hz; it adopts the server's `X-RateLimit-Limit` header). Data is streamed in `chunk_size` chunks straight to the writer.
 - `writer.py`: `SDSWriter` appends chunks to `<sds path>.partial` under per-file async locks. `done()` loads the partial file with pyrocko, degaps it, drops traces shorter than `min_length_seconds`, chops to the UTC day, saves as STEIM1/2 MiniSEED, and removes the partial file. `prepare()` deletes leftover `.partial` and zero-byte files. It can optionally register files in a pyrocko Squirrel env.
@@ -89,6 +92,8 @@ Tests are offline, except `tests/test_live.py`, which hits IRIS/GEOFON and only 
   - STA03: a single HHZ channel whose epoch ends on 2024-01-01.
 - `make_mseed`: a factory that builds real MiniSEED bytes with pyrocko.
 - `fake_fdsn`: an `aiohttp.test_utils.TestServer` serving station and dataselect queries. Point a `FDSNClient(url=fake_fdsn.url)` at it. Every dataselect query is recorded in `fake_fdsn.dataselect_requests`.
+
+`tests/test_cli.py` is the end-to-end test: it runs `download --non-interactive` through `CliRunner` against `fake_fdsn`. The CLI starts its own event loop, so the tests call it with `await asyncio.to_thread(runner.invoke, ...)`; otherwise it blocks the loop that serves the fake FDSN.
 
 Test modules import constants and types from `conftest` directly (`from conftest import STATION_TEXT`). When changing download, writer or rerun behaviour, extend `tests/test_manager.py::test_download`. It runs a full download twice and checks that the second run makes no new requests.
 

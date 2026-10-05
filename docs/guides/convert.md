@@ -45,4 +45,4 @@ Files are processed in parallel. A progress bar shows the scan and the conversio
 
 - Merging several input directories into one archive is fine, as long as each input is converted only once.
 - If a day file cannot be written, the error is logged and the file path is added to `errors.txt` in the output directory.
-- `convert` writes waveforms only. Get matching StationXML with `fdsn-rush download --metadata-only` if the stations are available from an FDSN server.
+- `convert` writes waveforms only. Get matching StationXML with `fdsn-rush metadata` if the stations are available from an FDSN server.

@@ -17,7 +17,7 @@ from rich.progress import track
 from fdsn_rush.client import DownloadDayfile
 from fdsn_rush.remote_log import RemoteLog
 from fdsn_rush.stats import Stats
-from fdsn_rush.utils import human_readable_bytes, wait_for_path
+from fdsn_rush.utils import human_readable_bytes, report, wait_for_path
 
 if TYPE_CHECKING:
     from pyrocko.squirrel import Squirrel
@@ -229,6 +229,7 @@ class SDSWriter(BaseModel):
 
     async def prepare(self) -> None:
         """Remove any partial files that may exist."""
+        report("sds_folder", self.sds_archive)
         logger.debug("Cleaning up partial files in %s", self.sds_archive)
         for file in self.sds_archive.glob("**/*.partial"):
             file.unlink()

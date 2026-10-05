@@ -11,6 +11,8 @@ fdsn-rush [OPTIONS] COMMAND [ARGS]...
 | Command                 | Purpose                                              |
 | ----------------------- | ---------------------------------------------------- |
 | [`init`](#init)         | Print a configuration file with all defaults.        |
+| [`check`](#check)       | Validate a configuration file.                       |
+| [`metadata`](#metadata) | Download only the station inventory and StationXML.  |
 | [`download`](#download) | Download data from FDSN servers into an SDS archive. |
 | [`convert`](#convert)   | Sort existing MiniSEED files into an SDS archive.    |
 
@@ -26,6 +28,24 @@ fdsn-rush init > config.json
 
 The defaults are documented in the [configuration reference](configuration.md).
 
+## `check`
+
+Validate a configuration file.
+
+```sh
+fdsn-rush check FILE
+```
+
+It loads the file in strict mode, as `download` does, and prints `FILE is valid`. An invalid file raises the validation error and exits with `1`. Nothing is contacted or written.
+
+## `metadata`
+
+Fetch the station inventory and write the StationXML to `metadata_path`, but download no waveforms.
+
+```sh
+fdsn-rush metadata FILE
+```
+
 ## `download`
 
 Download waveforms and StationXML as described in a configuration file.
@@ -37,11 +57,13 @@ fdsn-rush download [OPTIONS] FILE
 `FILE`
 :   Path to the configuration file.
 
-`-m`, `--metadata-only`
-:   Fetch the station inventory and write the StationXML, but download no waveforms.
-
 `-v`, `--verbose`
 :   Show debug output, including the request URLs.
+
+`-n`, `--non-interactive`
+:   Run without console output except a few `key: value` lines on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
+
+Every run writes its log to `<config>.log` next to the configuration file (`config.json` → `config.log`) and keeps `fdsn-rush-stats.json` in the SDS archive up to date.
 
 The command exits once all clients have finished. Running it again resumes or extends the archive. See [Resuming and updating archives](../guides/resuming.md).
 

@@ -7,18 +7,26 @@ from itertools import groupby
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
 
-from fdsn_rush.client import DownloadDayfile, FDSNClient
+from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
 from fdsn_rush.stats import Stats
-from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now
-from fdsn_rush.writer import SDSWriter
+from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now, report
+from fdsn_rush.writer import SDSWriter, SDSWriterStats
 
 if TYPE_CHECKING:
     from rich.table import Table
 
 logger = logging.getLogger(__name__)
+
+STATS_FILE_NAME = "fdsn-rush-stats.json"
+
+
+class StatsReport(BaseModel):
+    manager: FDSNDownloadManagerStats
+    writer: SDSWriterStats
+    clients: list[FDSNClientStats]
 
 
 class FDSNDownloadManagerStats(Stats):
@@ -29,6 +37,22 @@ class FDSNDownloadManagerStats(Stats):
         title="Start Time",
         description="Time when the download started",
     )
+
+    end_time: datetime | None = Field(
+        default=None,
+        title="End Time",
+        description="Time when the download finished",
+    )
+
+    @computed_field
+    @property
+    def elapsed_seconds(self) -> float | None:
+        """Seconds since the download started, frozen once it has finished."""
+        if self.start_time is None:
+            return None
+        return round(
+            ((self.end_time or datetime_now()) - self.start_time).total_seconds(), 3
+        )
 
     def _render(self, table: Table) -> None:
         """Render the statistics as a string."""
@@ -85,6 +109,7 @@ class FDSNDownloadManager(BaseModel):
     )
 
     _file: Path | None = PrivateAttr(default=None)
+    _file_done: asyncio.Event = PrivateAttr(default_factory=asyncio.Event)
     _stats: FDSNDownloadManagerStats = PrivateAttr(
         default_factory=FDSNDownloadManagerStats
     )
@@ -117,8 +142,6 @@ class FDSNDownloadManager(BaseModel):
             )
         await self.writer.prepare()
 
-        self._stats.start_time = datetime_now()
-
     def get_available_stations(self) -> list[NSL]:
         """Get a list of available stations based on the selection and blacklist."""
         available_stations = []
@@ -133,12 +156,14 @@ class FDSNDownloadManager(BaseModel):
 
     def get_work(self, client: FDSNClient) -> list[DownloadDayfile]:
         chunks: list[DownloadDayfile] = []
+        n_stations = 0
 
         for station in client.available_stations:
             if not any(nsl.match(station.nsl) for nsl in self.station_selection):
                 continue
             if any(nsl.match(station.nsl) for nsl in self.station_blacklist):
                 continue
+            n_stations += 1
 
             date = self.time_range[0]
             while date + timedelta(days=1) <= self.time_range[1]:
@@ -180,6 +205,10 @@ class FDSNDownloadManager(BaseModel):
             )
 
         logger.info("Found %d dayfiles to download", len(chunks_download))
+        report("server", client.url)
+        report("stations", n_stations)
+        report("in_archive", i_downloaded)
+        report("to_download", len(chunks_download))
         return chunks_download
 
     async def _download_from_client(self, client: FDSNClient, writer: SDSWriter):
@@ -192,26 +221,61 @@ class FDSNDownloadManager(BaseModel):
         for channel in work:
             await client.add_work(channel)
 
-        await client.download(writer)
+        await client.download(writer, self._file_done)
 
     async def download(self, metadata_only: bool = False):
         """Download data using all configured clients.
 
+        `<sds_archive>/fdsn-rush-stats.json` is rewritten at the start, whenever a
+        client finishes a file and at the end.
+
         Args:
             metadata_only: If True, only download metadata without downloading the data files.
         """
-        await self.prepare()
-        await self.download_metadata()
-        if metadata_only:
-            return
+        stats_file = self.writer.sds_archive / STATS_FILE_NAME
+        stats_file.parent.mkdir(parents=True, exist_ok=True)
 
-        async with asyncio.TaskGroup() as tg:
-            for client in self.clients:
-                tg.create_task(self._download_from_client(client, self.writer))
-        logger.info("All downloads completed successfully.")
+        async def update_stats_file() -> None:
+            while True:
+                self._write_stats(stats_file)
+                await self._file_done.wait()
+                self._file_done.clear()
+
+        self._stats.start_time = datetime_now()
+        updater = asyncio.create_task(update_stats_file())
+        try:
+            await self.prepare()
+            await self.download_metadata()
+            if not metadata_only:
+                async with asyncio.TaskGroup() as tg:
+                    for client in self.clients:
+                        tg.create_task(self._download_from_client(client, self.writer))
+                logger.info("All downloads completed successfully.")
+        finally:
+            updater.cancel()
+            self._stats.end_time = datetime_now()
+            try:
+                self._write_stats(stats_file)
+            except OSError:  # must not hide the error of the download
+                logger.exception("Failed to write %s", stats_file)
+
+    def stats_report(self) -> StatsReport:
+        """Return the run statistics of the manager, writer and clients."""
+        return StatsReport(
+            manager=self._stats,
+            writer=self.writer._stats,
+            clients=[client._stats for client in self.clients],
+        )
+
+    def _write_stats(self, path: Path) -> None:
+        """Replace `path` atomically, so a polling reader never sees half a file."""
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(self.stats_report().model_dump_json(exclude_none=True))
+        tmp.replace(path)
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""
+        report("metadata_folder", self.metadata_path)
         for client in self.clients:
             available_stations = []
             for station in client.available_stations:

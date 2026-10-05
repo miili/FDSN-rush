@@ -138,6 +138,14 @@ class FDSNClientStats(Stats):
         default=0,
         description="Number of completed downloads",
     )
+    n_no_data: int = Field(
+        default=0,
+        description="Number of dayfiles the server answered with 404 (no data)",
+    )
+    n_failed: int = Field(
+        default=0,
+        description="Number of dayfiles that failed (HTTP errors other than 404, timeouts)",
+    )
 
     _station_work_count: defaultdict[NSL, int] = PrivateAttr(
         default_factory=lambda: defaultdict(int)
@@ -184,6 +192,12 @@ class FDSNClientStats(Stats):
 
     @computed_field
     @property
+    def url(self) -> str:
+        """Return the URL of the FDSN client."""
+        return str(self._client.url) if self._client else "N/A"
+
+    @computed_field
+    @property
     def n_stations_completed(self) -> int:
         """Return the number of unique stations that have completed downloads."""
         return sum(1 for count in self._station_work_count.values() if count == 0)
@@ -212,7 +226,7 @@ class FDSNClientStats(Stats):
             )
         table.add_row(
             "Server",
-            f"[bold]{self._client.url if self._client else 'N/A'}[/bold]"
+            f"[bold]{self.url}[/bold]"
             f" ↓{self.get_download_speed().human_readable()}/s"
             f" ({self._client.n_workers if self._client else '?'} worker)",
         )
@@ -490,7 +504,7 @@ class FDSNClient(BaseModel):
         await self._work_queue.put(download)
         self._stats.chunk_add(download)
 
-    async def download(self, writer: SDSWriter) -> None:
+    async def download(self, writer: SDSWriter, file_done: asyncio.Event) -> None:
         """Download data from the FDSN service."""
         if self._work_queue.empty():
             raise ValueError("No work available in the queue")
@@ -545,6 +559,10 @@ class FDSNClient(BaseModel):
                         await writer.add_data(chunk, data)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
+                    if error_code == 404:
+                        self._stats.n_no_data += 1
+                    else:
+                        self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: %d %s error (%s)",
                         chunk.channel.nslc.pretty,
@@ -562,6 +580,7 @@ class FDSNClient(BaseModel):
                     )
                     continue
                 except aiohttp.ClientPayloadError as e:
+                    self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: Payload error: %s",
                         chunk.channel.nslc.pretty,
@@ -571,6 +590,7 @@ class FDSNClient(BaseModel):
                     continue
 
                 except TimeoutError:
+                    self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: Remote timeout (%.1f s)",
                         chunk.channel.nslc.pretty,
@@ -583,6 +603,7 @@ class FDSNClient(BaseModel):
                     self._work_queue.task_done()
 
                 await writer.done(chunk)
+                file_done.set()
 
         logger.info(
             "Starting download from %s with %d workers",

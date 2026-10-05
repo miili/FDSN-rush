@@ -10,10 +10,11 @@ import typer
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
-from fdsn_rush import __version__
+from fdsn_rush import __version__, utils
 from fdsn_rush.convert import convert_sds
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.stats import live_view
+from fdsn_rush.utils import report
 
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -22,6 +23,10 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(tracebacks_show_locals=False)],
 )
+
+logger = logging.getLogger(__name__)
+
+EXIT_CODES = {"ok": 0, "error": 1, "partial": 2}
 
 app = typer.Typer(
     name="fdsn-rush",
@@ -59,40 +64,81 @@ def init():
     rich.print_json(client.model_dump_json())
 
 
+ConfigFile = Annotated[Path, typer.Argument(help="Path to the configuration file")]
+Verbose = Annotated[int, typer.Option("--verbose", "-v", count=True)]
+NonInteractive = Annotated[
+    bool,
+    typer.Option(
+        "--non-interactive",
+        "-n",
+        help=(
+            "No live view and no console output except a few key: value lines "
+            "on stdout. Exit code: 0 ok, 1 error, 2 partial."
+        ),
+    ),
+]
+
+
 @app.command()
 def download(
-    file: Annotated[
-        Path,
-        typer.Argument(
-            ...,
-            help="Path to the configuration file",
-        ),
-    ],
-    metadata_only: Annotated[
-        bool,
-        typer.Option("--metadata-only", "-m", is_flag=True),
-    ] = False,
-    verbose: Annotated[
-        int,
-        typer.Option("--verbose", "-v", count=True),
-    ] = 0,
+    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
 ) -> None:
-    """Download data from FDSN to local SDS archive."""
-    client = FDSNDownloadManager.load(file)
+    """Download data from FDSN to local SDS archive.
 
-    log_level = logging.INFO
-    if verbose >= 1:
-        log_level = logging.DEBUG
+    Logs to <config>.log next to the configuration file.
+    """
+    manager = FDSNDownloadManager.load(file)
+    logging.root.setLevel(logging.DEBUG if verbose else logging.INFO)
+    log_file = logging.FileHandler(file.with_suffix(".log"), mode="w", encoding="utf-8")
+    log_file.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    )
+    logging.root.addHandler(log_file)
+    if non_interactive:
+        utils.NON_INTERACTIVE = True
+        rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
 
-    logging.root.setLevel(log_level)
+    async def run() -> None:
+        view = asyncio.create_task(live_view())  # silent when quiet
+        try:
+            await manager.download()
+        finally:
+            view.cancel()
 
-    async def run_download() -> None:
-        download = asyncio.create_task(client.download(metadata_only=metadata_only))
-        stats_view = asyncio.create_task(live_view())
-        await download
-        stats_view.cancel()
+    status = "ok"
+    try:
+        asyncio.run(run())
+    except Exception as e:
+        logger.exception("Download failed")
+        while isinstance(e, BaseExceptionGroup):  # unwrap nested TaskGroup errors
+            e = e.exceptions[0]
+        report("error", f"{type(e).__name__}: {e}")
+        status = "error"
 
-    asyncio.run(run_download())
+    stats = manager.stats_report()
+    n_failed = sum(c.n_failed for c in stats.clients)
+    report("files", stats.writer.total_files_saved)
+    report("no_data", sum(c.n_no_data for c in stats.clients))
+    report("failed", n_failed)
+    report("elapsed", f"{stats.manager.elapsed_seconds}s")
+    if status == "ok" and n_failed:
+        status = "partial"
+    report("status", status)
+    raise typer.Exit(EXIT_CODES[status])
+
+
+@app.command()
+def metadata(file: ConfigFile) -> None:
+    """Download only the station inventory and StationXML, no waveforms."""
+    manager = FDSNDownloadManager.load(file)
+    asyncio.run(manager.download(metadata_only=True))
+
+
+@app.command()
+def check(file: ConfigFile) -> None:
+    """Validate the configuration file."""
+    FDSNDownloadManager.load(file)
+    rich.print(f"{file} is valid")
 
 
 @app.command()
