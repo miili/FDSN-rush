@@ -18,6 +18,7 @@ echo $?
 ```text
 log_file: data/fdsn-rush.log
 stats_file: data/fdsn-rush-stats.json
+sds_folder: data
 downloading: https://geofon.gfz.de/
 files: 3
 no_data: 0
@@ -25,6 +26,9 @@ failed: 0
 elapsed: 4.4s
 status: ok
 ```
+
+`sds_folder`
+:   The SDS archive the files are written to.
 
 `downloading`
 :   A server that is being downloaded from. One line per server.

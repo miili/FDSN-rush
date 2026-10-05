@@ -69,6 +69,7 @@ async def test_non_interactive_downloads_one_day(
     report = _report(result.stdout)
     assert report["status"] == "ok"
     assert "error" not in report
+    assert report["sds_folder"] == str(tmp_path / "sds")
     assert report["downloading"] == fake_fdsn.url
     assert report["files"] == "3"
     assert report["failed"] == "0"
