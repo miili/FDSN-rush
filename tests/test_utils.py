@@ -8,32 +8,32 @@ from pydantic import TypeAdapter, ValidationError
 
 from fdsn_rush import utils
 from fdsn_rush.utils import (
-    _NSL,
     NSL,
     NSLC,
     Date,
     FilePath,
+    NSLType,
     date_today,
     human_readable_bytes,
     wait_for_path,
 )
 
 FILE_PATH_ADAPTER = TypeAdapter(FilePath)
-NSL_ADAPTER = TypeAdapter(NSL)
+NSL_ADAPTER = TypeAdapter(NSLType)
 DATE_ADAPTER = TypeAdapter(Date)
 
 
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
-        ("XX.STA01.00", _NSL("XX", "STA01", "00")),
-        ("XX.STA01", _NSL("XX", "STA01", "")),
-        ("XX", _NSL("XX", "", "")),
-        ("XX.STA01.00.HHZ", _NSL("XX", "STA01", "00")),
-        (["XX", "STA01", ""], _NSL("XX", "STA01", "")),
+        ("XX.STA01.00", NSL("XX", "STA01", "00")),
+        ("XX.STA01", NSL("XX", "STA01", "")),
+        ("XX", NSL("XX", "", "")),
+        ("XX.STA01.00.HHZ", NSL("XX", "STA01", "00")),
+        (["XX", "STA01", ""], NSL("XX", "STA01", "")),
     ],
 )
-def test_nsl_parse(value: str | list[str], expected: _NSL) -> None:
+def test_nsl_parse(value: str | list[str], expected: NSL) -> None:
     assert NSL_ADAPTER.validate_python(value) == expected
 
 
@@ -52,15 +52,15 @@ def test_nsl_serialize() -> None:
 @pytest.mark.parametrize(
     ("selector", "nsl", "expected"),
     [
-        (_NSL("XX", "", ""), _NSL("XX", "STA01", "00"), True),
-        (_NSL("YY", "", ""), _NSL("XX", "STA01", "00"), False),
-        (_NSL("XX", "STA01", ""), _NSL("XX", "STA01", "00"), True),
-        (_NSL("XX", "STA02", ""), _NSL("XX", "STA01", "00"), False),
-        (_NSL("XX", "STA*", ""), _NSL("XX", "STA01", "00"), True),
-        (_NSL("XX", "STA01", "10"), _NSL("XX", "STA01", "00"), False),
+        (NSL("XX", "", ""), NSL("XX", "STA01", "00"), True),
+        (NSL("YY", "", ""), NSL("XX", "STA01", "00"), False),
+        (NSL("XX", "STA01", ""), NSL("XX", "STA01", "00"), True),
+        (NSL("XX", "STA02", ""), NSL("XX", "STA01", "00"), False),
+        (NSL("XX", "STA*", ""), NSL("XX", "STA01", "00"), True),
+        (NSL("XX", "STA01", "10"), NSL("XX", "STA01", "00"), False),
     ],
 )
-def test_nsl_match(selector: _NSL, nsl: _NSL, expected: bool) -> None:
+def test_nsl_match(selector: NSL, nsl: NSL, expected: bool) -> None:
     assert selector.match(nsl) is expected
 
 
@@ -68,7 +68,7 @@ def test_nslc() -> None:
     nslc = NSLC.from_string("XX.STA01..HHZ")
     assert nslc == NSLC("XX", "STA01", "", "HHZ")
     assert nslc.pretty == "XX.STA01..HHZ"
-    assert NSLC.from_nsl(_NSL("XX", "STA01", ""), "HHZ") == nslc
+    assert NSLC.from_nsl(NSL("XX", "STA01", ""), "HHZ") == nslc
 
     with pytest.raises(ValueError, match="Invalid NSLC"):
         NSLC.from_string("XX.STA01")

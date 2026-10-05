@@ -12,7 +12,7 @@ from rich.progress import track
 
 from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
 from fdsn_rush.stats import Stats
-from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now, report
+from fdsn_rush.utils import NSL, Date, NSLType, date_today, datetime_now, report
 from fdsn_rush.writer import SDSWriter, SDSWriterStats
 
 if TYPE_CHECKING:
@@ -81,8 +81,8 @@ class FDSNDownloadManager(BaseModel):
         default_factory=lambda: (date_today() - timedelta(days=7), date_today()),
         description="Time range for downloading data",
     )
-    station_selection: list[NSL] = Field(
-        default=[_NSL("2D", "", "")],
+    station_selection: list[NSLType] = Field(
+        default=[NSL("2D", "", "")],
         min_length=1,
         description="List of NSL selections for stations to download",
     )
@@ -91,7 +91,7 @@ class FDSNDownloadManager(BaseModel):
         min_length=1,
         description="List of channel codes to download",
     )
-    station_blacklist: set[NSL] = Field(
+    station_blacklist: set[NSLType] = Field(
         default_factory=set,
         description="List of NSL selections for stations to exclude from download",
     )

@@ -4,7 +4,7 @@ FDSN Rush: async CLI that downloads seismic waveforms from FDSN web services int
 
 ## Commands
 
-Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling build). Requires Python 3.11+.
+Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling build). Requires Python 3.12+.
 
 ```sh
 uv sync                                   # install incl. dev group (pytest, pytest-asyncio, ruff, prek)
@@ -25,12 +25,12 @@ If another virtualenv is active, `uv` ignores the project `.venv` and warns. Pre
 
 CI (`.github/workflows/`):
 - `pre-commit.yaml` runs the `.pre-commit-config.yaml` hooks through prek: ruff lint + format, plus whitespace/EOF/yaml checks.
-- `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.11–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
+- `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.12–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
 - `docs.yaml` builds the docs strictly on every PR and push, and deploys `site/` to GitHub Pages from `main` only. The repo's Pages source must be set to "GitHub Actions".
 - `release.yaml` builds the sdist and wheel on every push to `main` (and on PRs touching packaging). On a `v*` tag it also runs `tests.yaml` (via `workflow_call`), publishes to PyPI with trusted publishing (environment `pypi`), and creates a GitHub release with generated notes.
 - `astral-sh/setup-uv` has no floating major tags. Pin a full version (`@v10.2.0`).
 
-Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py311` target from `requires-python`. Rules that bite:
+Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py312` target from `requires-python`. Rules that bite:
 - `T20`: no `print`.
 - `DTZ`: datetimes must be timezone-aware.
 - `G`: no f-strings in logging calls; use `%s` args.

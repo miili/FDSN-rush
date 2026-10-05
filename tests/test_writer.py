@@ -8,7 +8,7 @@ from pyrocko import io
 
 from fdsn_rush.client import DownloadDayfile
 from fdsn_rush.models.station import Stations
-from fdsn_rush.utils import _NSL
+from fdsn_rush.utils import NSL
 from fdsn_rush.writer import SDSWriter
 
 DAY = date(2024, 1, 1)
@@ -16,7 +16,7 @@ NSLC = ("XX", "STA01", "", "HHZ")
 
 
 def _dayfile(stations: Stations) -> DownloadDayfile:
-    sta01 = stations.get_station(_NSL("XX", "STA01", ""))
+    sta01 = stations.get_station(NSL("XX", "STA01", ""))
     (channel,) = sta01.get_channels(DAY, "HHZ")
     return DownloadDayfile(channel=channel, date=DAY)
 

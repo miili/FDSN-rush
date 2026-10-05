@@ -14,7 +14,11 @@ def test_fdsn_time() -> None:
 
 async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
-    selection = [NSL.parse("XX.STA01"), NSL.parse("YY.STA01"), NSL.parse("XX.STA02")]
+    selection = [
+        NSL.parse("XX.STA01"),
+        NSL.parse("YY.STA01"),
+        NSL.parse("XX.STA02"),
+    ]
 
     await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
 

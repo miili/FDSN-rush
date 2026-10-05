@@ -20,7 +20,7 @@
 
 ## Installation
 
-Requires Python 3.11 or newer.
+Requires Python 3.12 or newer.
 
 ```sh
 uv tool install fdsn-rush

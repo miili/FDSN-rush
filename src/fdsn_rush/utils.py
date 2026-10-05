@@ -91,7 +91,7 @@ FilePath = Annotated[
 ]
 
 
-class _NSL(NamedTuple):
+class NSL(NamedTuple):
     network: str
     station: str
     location: str
@@ -144,7 +144,7 @@ class _NSL(NamedTuple):
         """
         if not nsl:
             raise ValueError(f"invalid empty NSL: {nsl}")
-        if type(nsl) is _NSL:
+        if type(nsl) is NSL:
             return nsl
         if isinstance(nsl, (list, tuple)):
             return cls(*nsl)
@@ -193,11 +193,11 @@ class _NSL(NamedTuple):
         return self
 
 
-NSL = Annotated[
-    _NSL,
-    BeforeValidator(_NSL.parse),
-    AfterValidator(_NSL._check),
-    PlainSerializer(_NSL._pretty_str),
+type NSLType = Annotated[
+    NSL,
+    BeforeValidator(NSL.parse),
+    AfterValidator(NSL._check),
+    PlainSerializer(NSL._pretty_str),
 ]
 
 

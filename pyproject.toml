@@ -7,7 +7,15 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 authors = [{ name = "Marius Paul Isken", email = "marius.isken@gfz.de" }]
 maintainers = [{ name = "Marius Paul Isken", email = "marius.isken@gfz.de" }]
-keywords = ["seismology", "fdsn", "fdsnws", "miniseed", "sds", "eida", "download"]
+keywords = [
+    "seismology",
+    "fdsn",
+    "fdsnws",
+    "miniseed",
+    "sds",
+    "eida",
+    "download",
+]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
@@ -15,13 +23,12 @@ classifiers = [
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3 :: Only",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Scientific/Engineering :: Physics",
 ]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "aiohttp>=3.12.14",
     "pydantic>=2.11.7",
@@ -53,13 +60,14 @@ include = ["src/", "tests/"]
 
 [tool.uv]
 # Rebuild the package when the git tag changes the version
-cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+cache-keys = [
+    { file = "pyproject.toml" },
+    { git = { commit = true, tags = true } },
+]
 
 [dependency-groups]
 dev = ["prek>=0.3.5", "pytest>=8.4.1", "pytest-asyncio>=1.1.0", "ruff>=0.16.9"]
-docs = [
-    "zensical>=0.0.67",
-]
+docs = ["zensical>=0.0.67"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from fdsn_rush.utils import _NSL, AUX_CHANNELS, DATETIME_MAX, NSL, NSLC
+from fdsn_rush.utils import AUX_CHANNELS, DATETIME_MAX, NSL, NSLC, NSLType
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +19,7 @@ SDS_TEMPLATE: str = (
 
 
 class Channel(BaseModel):
-    nsl: NSL
+    nsl: NSLType
     code: str = Field(
         ...,
         max_length=3,
@@ -113,7 +113,7 @@ class Channel(BaseModel):
             raise ValueError(f"Invalid line format: {line}, got {len(parts)} parts")
         parts = list(map(str.strip, parts))
 
-        nsl = _NSL.parse(parts[0:3])
+        nsl = NSL.parse(parts[0:3])
         return cls(
             nsl=nsl,
             code=parts[3],
@@ -134,7 +134,7 @@ class Channel(BaseModel):
 
 
 class Station(BaseModel):
-    nsl: NSL
+    nsl: NSLType
 
     channels: list[Channel]
 

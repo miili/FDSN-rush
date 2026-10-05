@@ -8,7 +8,7 @@ This page takes you from installation to a working archive. You will download tw
 
 ## Install
 
-FDSN Rush requires **Python 3.11 or newer**. Install it as a standalone command-line tool:
+FDSN Rush requires **Python 3.12 or newer**. Install it as a standalone command-line tool:
 
 === "uv"
 
