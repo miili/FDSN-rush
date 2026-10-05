@@ -32,7 +32,6 @@ from fdsn_rush.utils import (
     FilePath,
     datetime_now,
     human_readable_bytes,
-    report,
 )
 
 if TYPE_CHECKING:
@@ -558,7 +557,6 @@ class FDSNClient(BaseModel):
                         date=chunk.date,
                     ):
                         await writer.add_data(chunk, data)
-                    await writer.done(chunk)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
                     if error_code == 404:
@@ -603,14 +601,15 @@ class FDSNClient(BaseModel):
                 finally:
                     self._stats.chunk_done(chunk)
                     self._work_queue.task_done()
-                    file_done.set()
+
+                await writer.done(chunk)
+                file_done.set()
 
         logger.info(
             "Starting download from %s with %d workers",
             self.url,
             self.n_workers,
         )
-        report("downloading", self.url)
 
         rate_limit_task = asyncio.create_task(rate_limit_timer())
         middleware = await self._get_auth_middlewares()

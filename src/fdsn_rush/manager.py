@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-LOG_FILE_NAME = "fdsn-rush.log"
 STATS_FILE_NAME = "fdsn-rush-stats.json"
 
 
@@ -208,6 +207,7 @@ class FDSNDownloadManager(BaseModel):
             )
 
         logger.info("Found %d dayfiles to download", len(chunks_download))
+        report("server", client.url)
         report("stations", n_stations)
         report("in_archive", i_downloaded)
         report("to_download", len(chunks_download))
@@ -255,7 +255,10 @@ class FDSNDownloadManager(BaseModel):
         finally:
             updater.cancel()
             self._stats.end_time = datetime_now()
-            self._write_stats(stats_file)
+            try:
+                self._write_stats(stats_file)
+            except OSError:  # must not hide the error of the download
+                logger.exception("Failed to write %s", stats_file)
 
     def stats_report(self) -> StatsReport:
         """Return the run statistics of the manager, writer and clients."""

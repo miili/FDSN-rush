@@ -85,6 +85,7 @@ class FakeFDSN:
         self.server = server
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
+        self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
 
     @property
     def url(self) -> str:
@@ -132,6 +133,8 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
             raise web.HTTPBadRequest(text="Error 400: bad time") from None
         location = "" if query["location"] == "--" else query["location"]
         nslc = (query["network"], query["station"], location, query["channel"])
+        if nslc in fake.failing_nslc:
+            raise web.HTTPInternalServerError(text="Error 500")
         if nslc in MISSING_NSLC:
             raise web.HTTPNotFound(text="Error 404: no data")
         day = start.date()

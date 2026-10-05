@@ -43,10 +43,8 @@ It loads the file in strict mode, as `download` does, and prints `FILE is valid`
 Fetch the station inventory and write the StationXML to `metadata_path`, but download no waveforms.
 
 ```sh
-fdsn-rush metadata [OPTIONS] FILE
+fdsn-rush metadata FILE
 ```
-
-It takes the same options as [`download`](#download), `-v` and `-n`.
 
 ## `download`
 
@@ -65,7 +63,7 @@ fdsn-rush download [OPTIONS] FILE
 `-n`, `--non-interactive`
 :   Run without console output except a few `key: value` lines on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
 
-Every run writes `fdsn-rush.log` and `fdsn-rush-stats.json` into the SDS archive.
+Every run appends its log to `<config>.log` next to the configuration file (`config.json` → `config.log`) and keeps `fdsn-rush-stats.json` in the SDS archive up to date.
 
 The command exits once all clients have finished. Running it again resumes or extends the archive. See [Resuming and updating archives](../guides/resuming.md).
 

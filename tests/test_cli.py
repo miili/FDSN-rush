@@ -72,7 +72,9 @@ async def test_non_interactive_downloads_one_day(
     assert report["status"] == "ok"
     assert "error" not in report
     assert report["sds_folder"] == str(tmp_path / "sds")
-    assert report["downloading"] == fake_fdsn.url
+    assert report["server"] == fake_fdsn.url
+    assert report["stations"] == "1"
+    assert report["to_download"] == "3"
     assert report["files"] == "3"
     assert report["failed"] == "0"
     assert result.stderr == ""  # quiet: details are in the log file
@@ -101,7 +103,7 @@ async def test_non_interactive_downloads_one_day(
     assert len(fake_fdsn.dataselect_requests) == 3
 
     # the log is in the archive
-    log = (sds / "fdsn-rush.log").read_text()
+    log = config.with_suffix(".log").read_text()
     assert "Starting download" in log
     assert "All downloads completed successfully." in log
 
@@ -134,7 +136,7 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     report = _report(result.stdout)
     assert report["status"] == "error"
     assert report["error"]
-    assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
+    assert "Download failed" in config.with_suffix(".log").read_text()
 
 
 async def test_stats_file_is_updated_per_file(
@@ -159,13 +161,23 @@ async def test_stats_file_is_updated_per_file(
     assert 0 < max(n_completed[1:-1]) <= 3  # progress was visible while running
 
 
-async def test_partial_when_downloads_failed(
-    tmp_path: Path, fake_fdsn: FakeFDSN, monkeypatch: pytest.MonkeyPatch
+async def test_metadata_downloads_no_waveforms(
+    tmp_path: Path, fake_fdsn: FakeFDSN
 ) -> None:
-    async def failing(self: FDSNClient, *args: object) -> None:
-        self._stats.n_failed = 2
+    config = _config(tmp_path, fake_fdsn.url)
 
-    monkeypatch.setattr(FDSNClient, "download", failing)
+    result = await asyncio.to_thread(runner.invoke, app, ["metadata", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert (tmp_path / "metadata" / "XX.xml").exists()
+    assert fake_fdsn.dataselect_requests == []
+    assert not list((tmp_path / "sds").glob("**/*.D.*"))
+
+
+async def test_server_error_counts_as_failed(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    fake_fdsn.failing_nslc.add(("XX", "STA01", "", "HHZ"))
     config = _config(tmp_path, fake_fdsn.url)
 
     result = await asyncio.to_thread(
@@ -173,25 +185,31 @@ async def test_partial_when_downloads_failed(
     )
 
     assert result.exit_code == 2
-    assert _report(result.stdout)["status"] == "partial"
+    report = _report(result.stdout)
+    assert report["files"] == "2"
+    assert report["failed"] == "1"
+    assert report["status"] == "partial"
 
 
-async def test_metadata_downloads_no_waveforms(
-    tmp_path: Path, fake_fdsn: FakeFDSN
+async def test_worker_error_is_unwrapped(
+    tmp_path: Path, fake_fdsn: FakeFDSN, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """An error inside the nested TaskGroups is reported as itself."""
+
+    async def broken(self: SDSWriter, download: object) -> None:
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(SDSWriter, "done", broken)
     config = _config(tmp_path, fake_fdsn.url)
 
     result = await asyncio.to_thread(
-        runner.invoke, app, ["metadata", str(config), "-n"]
+        runner.invoke, app, ["download", str(config), "-n"]
     )
 
-    assert result.exit_code == 0, result.stderr
+    assert result.exit_code == 1
     report = _report(result.stdout)
-    assert report["metadata_folder"] == str(tmp_path / "metadata")
-    assert report["status"] == "ok"
-    assert (tmp_path / "metadata" / "XX.xml").exists()
-    assert fake_fdsn.dataselect_requests == []
-    assert not list((tmp_path / "sds").glob("**/*.D.*"))
+    assert report["error"] == "RuntimeError: disk full"
+    assert report["status"] == "error"
 
 
 def test_check_valid_config(tmp_path: Path) -> None:

@@ -12,7 +12,7 @@ from rich.logging import RichHandler
 
 from fdsn_rush import __version__, utils
 from fdsn_rush.convert import convert_sds
-from fdsn_rush.manager import LOG_FILE_NAME, FDSNDownloadManager
+from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.stats import live_view
 from fdsn_rush.utils import report
 
@@ -79,25 +79,29 @@ NonInteractive = Annotated[
 ]
 
 
-def _download(file: Path, verbose: int, non_interactive: bool, metadata_only: bool):
+@app.command()
+def download(
+    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
+) -> None:
+    """Download data from FDSN to local SDS archive.
+
+    Logs to <config>.log next to the configuration file.
+    """
     manager = FDSNDownloadManager.load(file)
     logging.root.setLevel(logging.DEBUG if verbose else logging.INFO)
-    if non_interactive:
-        utils.NON_INTERACTIVE = True
-        rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
-
-    archive = manager.writer.sds_archive
-    archive.mkdir(parents=True, exist_ok=True)
-    log_file = logging.FileHandler(archive / LOG_FILE_NAME)
+    log_file = logging.FileHandler(file.with_suffix(".log"), encoding="utf-8")
     log_file.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     )
     logging.root.addHandler(log_file)
+    if non_interactive:
+        utils.NON_INTERACTIVE = True
+        rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
 
     async def run() -> None:
         view = asyncio.create_task(live_view())  # silent when quiet
         try:
-            await manager.download(metadata_only=metadata_only)
+            await manager.download()
         finally:
             view.cancel()
 
@@ -106,9 +110,9 @@ def _download(file: Path, verbose: int, non_interactive: bool, metadata_only: bo
         asyncio.run(run())
     except Exception as e:
         logger.exception("Download failed")
-        # TaskGroup wraps worker errors in an ExceptionGroup
-        leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
-        report("error", f"{type(leaf).__name__}: {leaf}")
+        while isinstance(e, BaseExceptionGroup):  # unwrap nested TaskGroup errors
+            e = e.exceptions[0]
+        report("error", f"{type(e).__name__}: {e}")
         status = "error"
 
     stats = manager.stats_report()
@@ -124,19 +128,10 @@ def _download(file: Path, verbose: int, non_interactive: bool, metadata_only: bo
 
 
 @app.command()
-def download(
-    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
-) -> None:
-    """Download data from FDSN to local SDS archive."""
-    _download(file, verbose, non_interactive, metadata_only=False)
-
-
-@app.command()
-def metadata(
-    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
-) -> None:
+def metadata(file: ConfigFile) -> None:
     """Download only the station inventory and StationXML, no waveforms."""
-    _download(file, verbose, non_interactive, metadata_only=True)
+    manager = FDSNDownloadManager.load(file)
+    asyncio.run(manager.download(metadata_only=True))
 
 
 @app.command()

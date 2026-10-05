@@ -4,7 +4,7 @@ icon: lucide/bot
 
 # Scripting and automation
 
-`--non-interactive` (`-n`) replaces the live view with a few `key: value` lines on stdout that a script or an AI agent can parse. `download` and `metadata` accept it.
+`fdsn-rush download --non-interactive` (`-n`) replaces the live view with a few `key: value` lines on stdout that a script or an AI agent can parse.
 
 ```sh
 fdsn-rush download config.json -n
@@ -13,21 +13,21 @@ fdsn-rush download config.json -n
 ```text
 sds_folder: data
 metadata_folder: metadata
+server: https://geofon.gfz.de/
 stations: 1
 in_archive: 0
 to_download: 1
-downloading: https://geofon.gfz.de/
 files: 1
 no_data: 0
 failed: 0
-elapsed: 2.785s
+elapsed: 2.815s
 status: ok
 ```
 
-Nothing else is printed, and stderr stays empty.
+Nothing else is printed. An invalid configuration file is the exception: it raises before the run starts, prints the full traceback and exits with `1`. Run [`check`](../reference/cli.md#check) first to catch it.
 
-`stations`, `in_archive`, `to_download`
-:   The plan per server: matching stations, day files already in the archive and day files requested.
+`server`, `stations`, `in_archive`, `to_download`
+:   The plan, one block of four lines per server: matching stations, day files already in the archive and day files requested.
 
 `files`
 :   Day files saved in this run.
@@ -46,16 +46,14 @@ Nothing else is printed, and stderr stays empty.
 | `1`  | `error`   | The run stopped, for example because a server was unreachable.           |
 | `2`  | `partial` | Finished, but `failed` is not `0`.                                       |
 
-Run again after a `1` or `2`: only the missing day files are requested. See [Resuming and updating archives](resuming.md). Validate a configuration file first with [`check`](../reference/cli.md#check).
+Run again after a `1` or `2`: only the missing day files are requested. See [Resuming and updating archives](resuming.md).
 
-## Files in the archive
+## Log and stats file
 
-Every `download` and `metadata` run, interactive or not, writes two files into `sds_folder`:
+`<config>.log`
+:   The log of `download`, next to the configuration file (`config.json` → `config.log`), appended to on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
 
-`fdsn-rush.log`
-:   The log, appended to on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
-
-`fdsn-rush-stats.json`
+`<sds_folder>/fdsn-rush-stats.json`
 :   Statistics as compact JSON, rewritten at the start, whenever a day file is finished and at the end. Poll it for progress. It is replaced atomically, so it never holds a half-written document.
 
 ```json
