@@ -67,7 +67,7 @@ cache-keys = [
 
 [dependency-groups]
 dev = ["prek>=0.3.5", "pytest>=8.4.1", "pytest-asyncio>=1.1.0", "ruff>=0.16.9"]
-docs = ["zensical>=0.0.67"]
+docs = ["markdown-exec[ansi]>=1.12", "zensical>=0.0.67"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

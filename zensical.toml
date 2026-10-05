@@ -27,6 +27,9 @@ nav = [
   ] },
 ]
 
+# Styles the ANSI colours of CLI output rendered by markdown-exec
+extra_css = ["stylesheets/ansi.css"]
+
 [project.theme]
 language = "en"
 features = [
@@ -94,6 +97,7 @@ pymdownx.magiclink = {}
 pymdownx.smartsymbols = {}
 pymdownx.superfences.custom_fences = [
   { name = "mermaid", class = "mermaid", format = "pymdownx.superfences.fence_code_format" },
+  { name = "python", class = "python", validator = "markdown_exec.validator", format = "markdown_exec.formatter" },
 ]
 pymdownx.tabbed.alternate_style = true
 pymdownx.tabbed.combine_header_slug = true
