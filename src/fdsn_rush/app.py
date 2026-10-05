@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Coroutine
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any, NoReturn
 
 import rich
 import typer
@@ -64,44 +65,32 @@ def init():
     rich.print_json(client.model_dump_json())
 
 
-@app.command()
-def download(
-    file: Annotated[
-        Path,
-        typer.Argument(
-            ...,
-            help="Path to the configuration file",
+ConfigFile = Annotated[Path, typer.Argument(help="Path to the configuration file")]
+Verbose = Annotated[int, typer.Option("--verbose", "-v", count=True)]
+NonInteractive = Annotated[
+    bool,
+    typer.Option(
+        "--non-interactive",
+        "-n",
+        help=(
+            "No live view and no console output except a few key: value lines "
+            "on stdout. Exit code: 0 ok, 1 error, 2 invalid config, 3 partial."
         ),
-    ],
-    metadata_only: Annotated[
-        bool,
-        typer.Option("--metadata-only", "-m", is_flag=True),
-    ] = False,
-    verbose: Annotated[
-        int,
-        typer.Option("--verbose", "-v", count=True),
-    ] = 0,
-    non_interactive: Annotated[
-        bool,
-        typer.Option(
-            "--non-interactive",
-            "-n",
-            help=(
-                "No live view and no console output except a few key: value lines "
-                "on stdout. Exit code: 0 ok, 1 error, 2 invalid config, 3 partial."
-            ),
-        ),
-    ] = False,
-) -> None:
-    """Download data from FDSN to local SDS archive."""
+    ),
+]
 
+
+def _start(
+    file: Path, verbose: int, non_interactive: bool, *, log: bool = True
+) -> FDSNDownloadManager:
+    """Load the config and set up output. Exits with code 2 if it is invalid."""
     logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
     if non_interactive:
         utils.NON_INTERACTIVE = True
         rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
 
     try:
-        client = FDSNDownloadManager.load(file)
+        manager = FDSNDownloadManager.load(file)
     except (OSError, ValueError) as e:
         if not non_interactive:
             raise
@@ -109,44 +98,81 @@ def download(
         report("status", "invalid_config")
         raise typer.Exit(EXIT_CODES["invalid_config"]) from e
 
-    archive = client.writer.sds_archive
-    archive.mkdir(parents=True, exist_ok=True)
-    log_file = logging.FileHandler(archive / LOG_FILE_NAME)
-    log_file.setFormatter(
-        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-    )
-    logging.root.addHandler(log_file)
-    report("log_file", archive / LOG_FILE_NAME)
-    report("stats_file", archive / STATS_FILE_NAME)
+    if log:
+        archive = manager.writer.sds_archive
+        archive.mkdir(parents=True, exist_ok=True)
+        log_file = logging.FileHandler(archive / LOG_FILE_NAME)
+        log_file.setFormatter(
+            logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+        )
+        logging.root.addHandler(log_file)
+        report("log_file", archive / LOG_FILE_NAME)
+        report("stats_file", archive / STATS_FILE_NAME)
+    return manager
 
-    if non_interactive:
-        status = "ok"
+
+def _run(
+    manager: FDSNDownloadManager, job: Coroutine[Any, Any, None], *, summary: bool
+) -> NoReturn:
+    """Run `job` with the live view, report the outcome and exit with its code."""
+
+    async def main() -> None:
+        view = None if utils.NON_INTERACTIVE else asyncio.create_task(live_view())
         try:
-            asyncio.run(client.download(metadata_only=metadata_only))
-        except Exception as e:
-            logger.exception("Download failed")
-            # TaskGroup wraps worker errors in an ExceptionGroup
-            leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
-            report("error", f"{type(leaf).__name__}: {leaf}")
-            status = "error"
-        stats = client.stats_report()
-        n_failed = sum(c.n_failed for c in stats.clients)
+            await job
+        finally:
+            if view:
+                view.cancel()
+
+    status = "ok"
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.exception("Run failed")
+        # TaskGroup wraps worker errors in an ExceptionGroup
+        leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
+        report("error", f"{type(leaf).__name__}: {leaf}")
+        status = "error"
+
+    stats = manager.stats_report()
+    n_failed = sum(c.n_failed for c in stats.clients)
+    if summary:
         report("files", stats.writer.total_files_saved)
         report("no_data", sum(c.n_no_data for c in stats.clients))
         report("failed", n_failed)
         report("elapsed", f"{stats.manager.elapsed_seconds}s")
-        if status == "ok" and n_failed:
-            status = "partial"
-        report("status", status)
-        raise typer.Exit(EXIT_CODES[status])
+    if status == "ok" and n_failed:
+        status = "partial"
+    report("status", status)
+    raise typer.Exit(EXIT_CODES[status])
 
-    async def run_download() -> None:
-        download = asyncio.create_task(client.download(metadata_only=metadata_only))
-        stats_view = asyncio.create_task(live_view())
-        await download
-        stats_view.cancel()
 
-    asyncio.run(run_download())
+@app.command()
+def download(
+    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
+) -> None:
+    """Download data from FDSN to local SDS archive."""
+    manager = _start(file, verbose, non_interactive)
+    _run(manager, manager.download(), summary=True)
+
+
+@app.command()
+def metadata(
+    file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
+) -> None:
+    """Download only the station inventory and StationXML, no waveforms."""
+    manager = _start(file, verbose, non_interactive)
+    _run(manager, manager.download(metadata_only=True), summary=False)
+
+
+@app.command()
+def check(file: ConfigFile) -> None:
+    """Show what `download` would do, without writing anything.
+
+    Prints key: value lines like `download --non-interactive`.
+    """
+    manager = _start(file, 0, non_interactive=True, log=False)
+    _run(manager, manager.check(), summary=False)
 
 
 @app.command()

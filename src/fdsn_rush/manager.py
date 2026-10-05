@@ -12,7 +12,7 @@ from rich.progress import track
 
 from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
 from fdsn_rush.stats import Stats
-from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now
+from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now, report
 from fdsn_rush.writer import SDSWriter, SDSWriterStats
 
 if TYPE_CHECKING:
@@ -159,12 +159,14 @@ class FDSNDownloadManager(BaseModel):
 
     def get_work(self, client: FDSNClient) -> list[DownloadDayfile]:
         chunks: list[DownloadDayfile] = []
+        n_stations = 0
 
         for station in client.available_stations:
             if not any(nsl.match(station.nsl) for nsl in self.station_selection):
                 continue
             if any(nsl.match(station.nsl) for nsl in self.station_blacklist):
                 continue
+            n_stations += 1
 
             date = self.time_range[0]
             while date + timedelta(days=1) <= self.time_range[1]:
@@ -206,6 +208,10 @@ class FDSNDownloadManager(BaseModel):
             )
 
         logger.info("Found %d dayfiles to download", len(chunks_download))
+        report("stations", n_stations)
+        report("dayfiles", len(chunks))
+        report("in_archive", i_downloaded)
+        report("to_download", len(chunks_download))
         return chunks_download
 
     async def _download_from_client(self, client: FDSNClient, writer: SDSWriter):
@@ -219,6 +225,13 @@ class FDSNDownloadManager(BaseModel):
             await client.add_work(channel)
 
         await client.download(writer, self._file_done)
+
+    async def check(self) -> None:
+        """Fetch the inventory and report what `download()` would do. Writes nothing."""
+        for client in self.clients:
+            report("server", client.url)
+            await client.prepare(self.station_selection, *self.time_range)
+            self.get_work(client)
 
     async def download(self, metadata_only: bool = False):
         """Download data using all configured clients.
@@ -278,6 +291,7 @@ class FDSNDownloadManager(BaseModel):
                 available_stations.append(station.nsl)
 
             self.metadata_path.mkdir(parents=True, exist_ok=True)
+            report("metadata_folder", self.metadata_path)
             for network, stations in groupby(
                 available_stations, key=lambda x: x.network
             ):

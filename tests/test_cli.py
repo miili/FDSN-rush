@@ -144,7 +144,7 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     report = _report(result.stdout)
     assert report["status"] == "error"
     assert report["error"]
-    assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
+    assert "Run failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
 
 
 async def test_stats_file_is_updated_per_file(
@@ -184,3 +184,61 @@ async def test_partial_when_downloads_failed(
 
     assert result.exit_code == 3
     assert _report(result.stdout)["status"] == "partial"
+
+
+async def test_metadata_downloads_no_waveforms(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    config = _config(tmp_path, fake_fdsn.url)
+
+    result = await asyncio.to_thread(
+        runner.invoke, app, ["metadata", str(config), "-n"]
+    )
+
+    assert result.exit_code == 0, result.stderr
+    report = _report(result.stdout)
+    assert report["metadata_folder"] == str(tmp_path / "metadata")
+    assert report["status"] == "ok"
+    assert (tmp_path / "metadata" / "XX.xml").exists()
+    assert fake_fdsn.dataselect_requests == []
+    assert not list((tmp_path / "sds").glob("**/*.D.*"))
+
+
+async def test_check_reports_plan_and_writes_nothing(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    config = _config(tmp_path, fake_fdsn.url)
+
+    result = await asyncio.to_thread(runner.invoke, app, ["check", str(config)])
+
+    assert result.exit_code == 0, result.stderr
+    assert _report(result.stdout) == {
+        "server": fake_fdsn.url,
+        "stations": "1",
+        "dayfiles": "3",
+        "in_archive": "0",
+        "to_download": "3",
+        "status": "ok",
+    }
+    assert fake_fdsn.dataselect_requests == []
+    assert not (tmp_path / "sds").exists()
+    assert not (tmp_path / "metadata").exists()
+
+
+def test_check_invalid_config(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["check", str(tmp_path / "missing.json")])
+
+    assert result.exit_code == 2
+    assert _report(result.stdout)["status"] == "invalid_config"
+
+
+async def test_download_interactive_exit_code(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    """Without -n the live view runs and the files are still written."""
+    config = _config(tmp_path, fake_fdsn.url)
+
+    result = await asyncio.to_thread(runner.invoke, app, ["download", str(config)])
+
+    assert result.exit_code == 0
+    assert len(list((tmp_path / "sds").glob("**/*.D.*"))) == 3

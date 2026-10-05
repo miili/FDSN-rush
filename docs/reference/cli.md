@@ -11,6 +11,8 @@ fdsn-rush [OPTIONS] COMMAND [ARGS]...
 | Command                 | Purpose                                              |
 | ----------------------- | ---------------------------------------------------- |
 | [`init`](#init)         | Print a configuration file with all defaults.        |
+| [`check`](#check)       | Show what `download` would do, without writing anything. |
+| [`metadata`](#metadata) | Download only the station inventory and StationXML.  |
 | [`download`](#download) | Download data from FDSN servers into an SDS archive. |
 | [`convert`](#convert)   | Sort existing MiniSEED files into an SDS archive.    |
 
@@ -26,6 +28,43 @@ fdsn-rush init > config.json
 
 The defaults are documented in the [configuration reference](configuration.md).
 
+## `check`
+
+Show what [`download`](#download) would do, without writing anything.
+
+```sh
+fdsn-rush check FILE
+```
+
+It validates the configuration, fetches the station inventory from each server and prints `key: value` lines:
+
+```text
+server: https://geofon.gfz.de/
+stations: 2
+dayfiles: 14
+in_archive: 6
+to_download: 8
+status: ok
+```
+
+`stations`
+:   Stations that match your selection and blacklist.
+
+`dayfiles`, `in_archive`, `to_download`
+:   Channel-days that pass the selection, how many of them are already in the archive, and how many a `download` would request.
+
+The exit code is `0` for `ok`, `1` if a server could not be reached and `2` for an invalid configuration. Nothing is written to disk: no archive, no log file, no StationXML.
+
+## `metadata`
+
+Fetch the station inventory and write the StationXML to `metadata_path`, but download no waveforms.
+
+```sh
+fdsn-rush metadata [OPTIONS] FILE
+```
+
+It takes the same options as [`download`](#download), `-v` and `-n`.
+
 ## `download`
 
 Download waveforms and StationXML as described in a configuration file.
@@ -36,9 +75,6 @@ fdsn-rush download [OPTIONS] FILE
 
 `FILE`
 :   Path to the configuration file.
-
-`-m`, `--metadata-only`
-:   Fetch the station inventory and write the StationXML, but download no waveforms.
 
 `-v`, `--verbose`
 :   Show debug output, including the request URLs.
