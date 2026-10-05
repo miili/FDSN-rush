@@ -86,6 +86,7 @@ class FakeFDSN:
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
         self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
+        self.nodata_networks: set[str] = set()  # station queries answered with 404
 
     @property
     def url(self) -> str:
@@ -111,6 +112,8 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
                     raise web.HTTPBadRequest(text=f"Error 400: bad line {line!r}")
                 selection.append(fields)
         fake.station_requests.append({"options": options, "selection": selection})
+        if selection and all(line[0] in fake.nodata_networks for line in selection):
+            raise web.HTTPNotFound(text="Error 404: no data")
         if options.get("format") == "xml":
             return web.Response(text="<FDSNStationXML/>")
         return web.Response(text=STATION_TEXT)
