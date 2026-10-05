@@ -5,20 +5,26 @@ import logging
 from datetime import date, datetime, timedelta
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
 
-from fdsn_rush.client import DownloadDayfile, FDSNClient
+from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
 from fdsn_rush.stats import Stats
 from fdsn_rush.utils import _NSL, NSL, Date, date_today, datetime_now
-from fdsn_rush.writer import SDSWriter
+from fdsn_rush.writer import SDSWriter, SDSWriterStats
 
 if TYPE_CHECKING:
     from rich.table import Table
 
 logger = logging.getLogger(__name__)
+
+
+class StatsReport(BaseModel):
+    manager: FDSNDownloadManagerStats
+    writer: SDSWriterStats
+    clients: list[FDSNClientStats]
 
 
 class FDSNDownloadManagerStats(Stats):
@@ -229,16 +235,13 @@ class FDSNDownloadManager(BaseModel):
         finally:
             self._stats.end_time = datetime_now()
 
-    def stats_report(self) -> dict[str, Any]:
+    def stats_report(self) -> StatsReport:
         """Return the run statistics of the manager, writer and clients as JSON-able data."""
-        return {
-            "manager": self._stats.model_dump(mode="json"),
-            "writer": self.writer._stats.model_dump(mode="json"),
-            "clients": [
-                {"url": str(client.url), **client._stats.model_dump(mode="json")}
-                for client in self.clients
-            ],
-        }
+        return StatsReport(
+            manager=self._stats,
+            writer=self.writer._stats,
+            clients=[client._stats for client in self.clients],
+        )
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""

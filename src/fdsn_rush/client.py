@@ -192,6 +192,12 @@ class FDSNClientStats(Stats):
 
     @computed_field
     @property
+    def url(self) -> str:
+        """Return the URL of the FDSN client."""
+        return str(self._client.url) if self._client else "N/A"
+
+    @computed_field
+    @property
     def n_stations_completed(self) -> int:
         """Return the number of unique stations that have completed downloads."""
         return sum(1 for count in self._station_work_count.values() if count == 0)
@@ -220,7 +226,7 @@ class FDSNClientStats(Stats):
             )
         table.add_row(
             "Server",
-            f"[bold]{self._client.url if self._client else 'N/A'}[/bold]"
+            f"[bold]{self.url}[/bold]"
             f" ↓{self.get_download_speed().human_readable()}/s"
             f" ({self._client.n_workers if self._client else '?'} worker)",
         )

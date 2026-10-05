@@ -97,6 +97,14 @@ def download(
             ),
         ),
     ] = None,
+    stats_interval: Annotated[
+        float,
+        typer.Option(
+            "--stats-interval",
+            min=1.0,
+            help="Seconds between updates of the stats file (--non-interactive).",
+        ),
+    ] = 5.0,
 ) -> None:
     """Download data from FDSN to local SDS archive."""
     log_level = logging.DEBUG if verbose >= 1 else logging.INFO
@@ -107,6 +115,7 @@ def download(
                 file,
                 metadata_only=metadata_only,
                 stats_file=stats_file,
+                stats_interval=stats_interval,
                 log_level=log_level,
             )
         )

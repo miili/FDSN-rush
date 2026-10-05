@@ -7,10 +7,12 @@ import json
 from datetime import date
 from pathlib import Path
 
+import pytest
 from conftest import FakeFDSN
 from pydantic import HttpUrl
 from typer.testing import CliRunner
 
+from fdsn_rush import headless
 from fdsn_rush.app import app
 from fdsn_rush.client import FDSNClient
 from fdsn_rush.manager import FDSNDownloadManager
@@ -49,8 +51,7 @@ async def test_non_interactive_downloads_one_day(
     # stdout is exactly one JSON document, logs are on stderr
     report = json.loads(result.stdout)
     assert report["status"] == "ok"
-    assert report["exit_code"] == 0
-    assert report["error"] is None
+    assert "error" not in report
     assert report["time_range"] == ["2024-01-01", "2024-01-02"]
     assert "Starting download" in result.stderr
 
@@ -109,9 +110,8 @@ def test_non_interactive_invalid_config(tmp_path: Path) -> None:
 
     assert result.exit_code == 2
     report = json.loads(result.stdout)
-    assert report["status"] == "error"
-    assert report["error"]["type"] == "config"
-    assert report["stats"] is None
+    assert report["status"] == "invalid_config"
+    assert "stats" not in report
 
 
 def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
@@ -122,7 +122,7 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     assert result.exit_code == 1
     report = json.loads(result.stdout)
     assert report["status"] == "error"
-    assert report["error"]["type"] != "config"
+    assert report["error"]
     assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
 
 
@@ -134,10 +134,49 @@ def test_stats_file_needs_non_interactive(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
-def test_exit_code_partial_when_downloads_failed() -> None:
-    from fdsn_rush.headless import ExitCode, _status
+async def test_stats_file_is_polled(
+    tmp_path: Path, fake_fdsn: FakeFDSN, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """While the download runs, the stats file is rewritten with status "running"."""
 
-    report = {"error": None, "stats": {"clients": [{"n_failed": 2}]}}
-    assert _status(report) == ExitCode.PARTIAL
-    report["stats"]["clients"][0]["n_failed"] = 0
-    assert _status(report) == ExitCode.OK
+    async def slow_download(self: FDSNDownloadManager, **kwargs: object) -> None:
+        await asyncio.sleep(0.5)
+
+    monkeypatch.setattr(FDSNDownloadManager, "download", slow_download)
+    stats_file = tmp_path / "stats.json"
+    run_task = asyncio.create_task(
+        asyncio.to_thread(
+            headless.run,
+            _config(tmp_path, fake_fdsn.url),
+            stats_file=stats_file,
+            stats_interval=0.05,
+        )
+    )
+    for _ in range(100):
+        if (
+            stats_file.exists()
+            and json.loads(stats_file.read_text())["status"] == "running"
+        ):
+            break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("stats file was not updated while running")
+
+    assert await run_task == 0
+    assert json.loads(stats_file.read_text())["status"] == "ok"
+
+
+def test_partial_when_downloads_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    async def failing_download(self: FDSNDownloadManager, **kwargs: object) -> None:
+        self.clients[0]._stats.n_failed = 2
+
+    monkeypatch.setattr(FDSNDownloadManager, "download", failing_download)
+
+    result = runner.invoke(
+        app, ["download", str(_config(tmp_path, "http://x.invalid")), "-n"]
+    )
+
+    assert result.exit_code == 3
+    assert json.loads(result.stdout)["status"] == "partial"
