@@ -504,7 +504,7 @@ class FDSNClient(BaseModel):
         await self._work_queue.put(download)
         self._stats.chunk_add(download)
 
-    async def download(self, writer: SDSWriter) -> None:
+    async def download(self, writer: SDSWriter, file_done: asyncio.Event) -> None:
         """Download data from the FDSN service."""
         if self._work_queue.empty():
             raise ValueError("No work available in the queue")
@@ -557,6 +557,7 @@ class FDSNClient(BaseModel):
                         date=chunk.date,
                     ):
                         await writer.add_data(chunk, data)
+                    await writer.done(chunk)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
                     if error_code == 404:
@@ -601,8 +602,7 @@ class FDSNClient(BaseModel):
                 finally:
                     self._stats.chunk_done(chunk)
                     self._work_queue.task_done()
-
-                await writer.done(chunk)
+                    file_done.set()
 
         logger.info(
             "Starting download from %s with %d workers",

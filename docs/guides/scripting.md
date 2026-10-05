@@ -21,7 +21,7 @@ Every `download` run, interactive or not, also writes two files into the SDS arc
 :   The log with UTC timestamps, appended to on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
 
 `<sds_archive>/fdsn-rush-stats.json`
-:   The same report as stdout, rewritten every 5 seconds while the run is going. `status` is `running` until the run ends. Poll this file for progress. It is replaced atomically, so it never holds a half-written document.
+:   The same report as stdout, rewritten at the start, whenever a file has been downloaded and at the end. `status` is `running` until the run ends. Poll this file for progress. It is replaced atomically, so it never holds a half-written document.
 
 ## Exit codes
 

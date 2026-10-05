@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from collections.abc import Iterator
 from datetime import date
 from pathlib import Path
 
@@ -12,13 +14,22 @@ from conftest import FakeFDSN
 from pydantic import HttpUrl
 from typer.testing import CliRunner
 
-from fdsn_rush import manager as manager_module
 from fdsn_rush.app import app
 from fdsn_rush.client import FDSNClient
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.writer import SDSWriter
 
 runner = CliRunner()
+
+
+@pytest.fixture(autouse=True)
+def _restore_root_logging() -> Iterator[None]:
+    """`download` adds a file handler to the root logger, like a real process would."""
+    handlers = logging.root.handlers[:]
+    yield
+    for handler in logging.root.handlers[len(handlers) :]:
+        handler.close()
+    logging.root.handlers = handlers
 
 
 def _config(tmp_path: Path, url: str, selection: str = "XX.STA01") -> Path:
@@ -126,44 +137,41 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
 
 
-async def test_stats_file_is_polled(
+async def test_stats_file_is_updated_per_file(
     tmp_path: Path, fake_fdsn: FakeFDSN, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """While the download runs, the stats file is rewritten with status "running"."""
-
-    async def slow(self: FDSNDownloadManager, metadata_only: bool) -> None:
-        await asyncio.sleep(0.5)
-
-    monkeypatch.setattr(FDSNDownloadManager, "_download", slow)
-    monkeypatch.setattr(manager_module, "STATS_INTERVAL", 0.05)
+    """The stats file is rewritten at the start, when files finish and at the end."""
     manager = FDSNDownloadManager.load(_config(tmp_path, fake_fdsn.url))
-    stats_file = tmp_path / "sds" / "fdsn-rush-stats.json"
+    reports = []
+    write_report = FDSNDownloadManager._write_report
 
-    download = asyncio.create_task(manager.download())
-    for _ in range(100):
-        if (
-            stats_file.exists()
-            and json.loads(stats_file.read_text())["status"] == "running"
-        ):
-            break
-        await asyncio.sleep(0.01)
-    else:
-        pytest.fail("stats file was not updated while running")
-    await download
+    def spy(self: FDSNDownloadManager, path: Path) -> None:
+        reports.append(self.report())
+        write_report(self, path)
 
-    assert json.loads(stats_file.read_text())["status"] == "ok"
+    monkeypatch.setattr(FDSNDownloadManager, "_write_report", spy)
+
+    await manager.download()
+
+    assert reports[0].status == "running"
+    assert reports[-1].status == "ok"
+    assert len(reports) > 2  # start, at least one finished file, end
+    assert any(
+        r.status == "running" and r.stats.clients[0].n_completed > 0 for r in reports
+    )
 
 
-def test_partial_when_downloads_failed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+async def test_partial_when_downloads_failed(
+    tmp_path: Path, fake_fdsn: FakeFDSN, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    async def failing(self: FDSNDownloadManager, metadata_only: bool) -> None:
-        self.clients[0]._stats.n_failed = 2
+    async def failing(self: FDSNClient, *args: object) -> None:
+        self._stats.n_failed = 2
 
-    monkeypatch.setattr(FDSNDownloadManager, "_download", failing)
+    monkeypatch.setattr(FDSNClient, "download", failing)
+    config = _config(tmp_path, fake_fdsn.url)
 
-    result = runner.invoke(
-        app, ["download", str(_config(tmp_path, "http://x.invalid")), "-n"]
+    result = await asyncio.to_thread(
+        runner.invoke, app, ["download", str(config), "-n"]
     )
 
     assert result.exit_code == 3

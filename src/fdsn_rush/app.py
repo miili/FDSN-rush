@@ -5,7 +5,7 @@ import contextlib
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, NoReturn
 
 import rich
 import typer
@@ -14,7 +14,7 @@ from rich.logging import RichHandler
 
 from fdsn_rush import __version__
 from fdsn_rush.convert import convert_sds
-from fdsn_rush.manager import FDSNDownloadManager, Report
+from fdsn_rush.manager import LOG_FILE_NAME, FDSNDownloadManager, Report
 from fdsn_rush.stats import live_view
 
 FORMAT = "%(message)s"
@@ -63,6 +63,12 @@ def init():
     rich.print_json(client.model_dump_json())
 
 
+def _finish(report: Report) -> NoReturn:
+    """Print the report as the only output and exit with its status code."""
+    sys.stdout.write(report.model_dump_json(exclude_none=True) + "\n")
+    raise typer.Exit(EXIT_CODES[report.status])
+
+
 @app.command()
 def download(
     file: Annotated[
@@ -94,21 +100,28 @@ def download(
 ) -> None:
     """Download data from FDSN to local SDS archive."""
     logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
-
     if non_interactive:
         rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
-        try:
-            client = FDSNDownloadManager.load(file)
-        except (OSError, ValueError) as e:
-            report = Report(status="invalid_config", error=str(e))
-        else:
-            with contextlib.suppress(Exception):  # kept in the report and the log file
-                asyncio.run(client.download(metadata_only=metadata_only))
-            report = client.report()
-        sys.stdout.write(report.model_dump_json(exclude_none=True) + "\n")
-        raise typer.Exit(EXIT_CODES[report.status])
 
-    client = FDSNDownloadManager.load(file)
+    try:
+        client = FDSNDownloadManager.load(file)
+    except (OSError, ValueError) as e:
+        if not non_interactive:
+            raise
+        _finish(Report(status="invalid_config", error=str(e)))
+
+    archive = client.writer.sds_archive
+    archive.mkdir(parents=True, exist_ok=True)
+    log_file = logging.FileHandler(archive / LOG_FILE_NAME)
+    log_file.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    )
+    logging.root.addHandler(log_file)
+
+    if non_interactive:
+        with contextlib.suppress(Exception):  # kept in the report and the log file
+            asyncio.run(client.download(metadata_only=metadata_only))
+        _finish(client.report())
 
     async def run_download() -> None:
         download = asyncio.create_task(client.download(metadata_only=metadata_only))
