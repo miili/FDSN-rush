@@ -10,7 +10,7 @@ import typer
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
-from fdsn_rush import __version__
+from fdsn_rush import __version__, headless
 from fdsn_rush.convert import convert_sds
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.stats import live_view
@@ -76,13 +76,44 @@ def download(
         int,
         typer.Option("--verbose", "-v", count=True),
     ] = 0,
+    non_interactive: Annotated[
+        bool,
+        typer.Option(
+            "--non-interactive",
+            "-n",
+            help=(
+                "No live view. Log to stderr and to <sds_archive>/fdsn-rush.log, "
+                "print a JSON summary to stdout and exit with a status code."
+            ),
+        ),
+    ] = False,
+    stats_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--stats-file",
+            help=(
+                "Write the JSON summary here (--non-interactive). "
+                "Default: <sds_archive>/fdsn-rush-stats.json"
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Download data from FDSN to local SDS archive."""
-    client = FDSNDownloadManager.load(file)
+    log_level = logging.DEBUG if verbose >= 1 else logging.INFO
 
-    log_level = logging.INFO
-    if verbose >= 1:
-        log_level = logging.DEBUG
+    if non_interactive:
+        raise typer.Exit(
+            headless.run(
+                file,
+                metadata_only=metadata_only,
+                stats_file=stats_file,
+                log_level=log_level,
+            )
+        )
+    if stats_file is not None:
+        raise typer.BadParameter("--stats-file needs --non-interactive")
+
+    client = FDSNDownloadManager.load(file)
 
     logging.root.setLevel(log_level)
 

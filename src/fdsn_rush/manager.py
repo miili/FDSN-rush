@@ -5,9 +5,9 @@ import logging
 from datetime import date, datetime, timedelta
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field, PrivateAttr, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
 
 from fdsn_rush.client import DownloadDayfile, FDSNClient
@@ -29,6 +29,22 @@ class FDSNDownloadManagerStats(Stats):
         title="Start Time",
         description="Time when the download started",
     )
+
+    end_time: datetime | None = Field(
+        default=None,
+        title="End Time",
+        description="Time when the download finished",
+    )
+
+    @computed_field
+    @property
+    def elapsed_seconds(self) -> float | None:
+        """Seconds since the download started, frozen once it has finished."""
+        if self.start_time is None:
+            return None
+        return round(
+            ((self.end_time or datetime_now()) - self.start_time).total_seconds(), 3
+        )
 
     def _render(self, table: Table) -> None:
         """Render the statistics as a string."""
@@ -200,15 +216,29 @@ class FDSNDownloadManager(BaseModel):
         Args:
             metadata_only: If True, only download metadata without downloading the data files.
         """
-        await self.prepare()
-        await self.download_metadata()
-        if metadata_only:
-            return
+        try:
+            await self.prepare()
+            await self.download_metadata()
+            if metadata_only:
+                return
 
-        async with asyncio.TaskGroup() as tg:
-            for client in self.clients:
-                tg.create_task(self._download_from_client(client, self.writer))
-        logger.info("All downloads completed successfully.")
+            async with asyncio.TaskGroup() as tg:
+                for client in self.clients:
+                    tg.create_task(self._download_from_client(client, self.writer))
+            logger.info("All downloads completed successfully.")
+        finally:
+            self._stats.end_time = datetime_now()
+
+    def stats_report(self) -> dict[str, Any]:
+        """Return the run statistics of the manager, writer and clients as JSON-able data."""
+        return {
+            "manager": self._stats.model_dump(mode="json"),
+            "writer": self.writer._stats.model_dump(mode="json"),
+            "clients": [
+                {"url": str(client.url), **client._stats.model_dump(mode="json")}
+                for client in self.clients
+            ],
+        }
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""

@@ -138,6 +138,14 @@ class FDSNClientStats(Stats):
         default=0,
         description="Number of completed downloads",
     )
+    n_no_data: int = Field(
+        default=0,
+        description="Number of dayfiles the server answered with 404 (no data)",
+    )
+    n_failed: int = Field(
+        default=0,
+        description="Number of dayfiles that failed (HTTP errors other than 404, timeouts)",
+    )
 
     _station_work_count: defaultdict[NSL, int] = PrivateAttr(
         default_factory=lambda: defaultdict(int)
@@ -545,6 +553,10 @@ class FDSNClient(BaseModel):
                         await writer.add_data(chunk, data)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
+                    if error_code == 404:
+                        self._stats.n_no_data += 1
+                    else:
+                        self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: %d %s error (%s)",
                         chunk.channel.nslc.pretty,
@@ -562,6 +574,7 @@ class FDSNClient(BaseModel):
                     )
                     continue
                 except aiohttp.ClientPayloadError as e:
+                    self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: Payload error: %s",
                         chunk.channel.nslc.pretty,
@@ -571,6 +584,7 @@ class FDSNClient(BaseModel):
                     continue
 
                 except TimeoutError:
+                    self._stats.n_failed += 1
                     logger.error(
                         "Failed to download %s for %s: Remote timeout (%.1f s)",
                         chunk.channel.nslc.pretty,

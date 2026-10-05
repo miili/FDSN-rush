@@ -10,6 +10,7 @@ Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling 
 uv sync                                   # install incl. dev group (pytest, pytest-asyncio, ruff, prek)
 uv run fdsn-rush init > config.json       # dump default config
 uv run fdsn-rush download config.json -v  # -v = DEBUG logging, -m = metadata only
+uv run fdsn-rush download config.json -n  # non-interactive: JSON summary on stdout, log in the SDS dir
 uv run fdsn-rush convert in/ out-sds/ --steim 2 --network XX
 uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
@@ -41,6 +42,7 @@ The prek hook pins a newer ruff (v0.16) than older dev installs. Trust `prek run
 All modules are in `src/fdsn_rush/`.
 
 - `app.py`: Typer CLI (`init`, `download`, `convert`). `download` runs `FDSNDownloadManager.download()` alongside `stats.live_view()` in one asyncio loop.
+- `headless.py`: `run()` is the `download --non-interactive` mode. It swaps the root logging handlers for stderr plus `<sds_archive>/fdsn-rush.log`, sends Rich output to stderr (`rich.reconfigure(stderr=True)`) so stdout stays one JSON document, writes that document to `<sds_archive>/fdsn-rush-stats.json` and maps the outcome to `ExitCode` (0 ok, 1 error, 2 bad config, 3 partial). The numbers come from `FDSNDownloadManager.stats_report()`. Extend the report there and in `docs/guides/scripting.md`.
 - `manager.py`: `FDSNDownloadManager` (pydantic model) **is** the JSON config schema. `load()` validates with `strict=True`. Flow: `prepare()` (clients fetch station inventory, writer scans the archive) → `download_metadata()` (StationXML per network into `metadata_path/<NET>.xml`) → per client `get_work()` → `client.download(writer)`. Clients run concurrently in a `TaskGroup`.
   - `get_work()` builds one `DownloadDayfile` per channel per day. `channel_priority` is an ordered list of fnmatch patterns, and the first pattern that yields `>= min_channels_per_station` channels wins for that station-day. Dayfiles already present in the archive are skipped.
 - `client.py`: `FDSNClient` does all HTTP via aiohttp against `/fdsnws/station/1/query` (inventory: one POSTed text-format request per network, merged with `Stations.extend`, and a body containing `Error 404` is treated as "no stations"; metadata: StationXML, also POSTed) and `/fdsnws/dataselect/1/query` (or `queryauth` with an EIDA token → digest auth middleware). Downloads use an `asyncio.Queue` of dayfiles, `n_workers` workers, and a rate limiter (`asyncio.Condition` ticked at `rate_limit` Hz; it adopts the server's `X-RateLimit-Limit` header). Data is streamed in `chunk_size` chunks straight to the writer.
@@ -89,6 +91,8 @@ Tests are offline, except `tests/test_live.py`, which hits IRIS/GEOFON and only 
   - STA03: a single HHZ channel whose epoch ends on 2024-01-01.
 - `make_mseed`: a factory that builds real MiniSEED bytes with pyrocko.
 - `fake_fdsn`: an `aiohttp.test_utils.TestServer` serving station and dataselect queries. Point a `FDSNClient(url=fake_fdsn.url)` at it. Every dataselect query is recorded in `fake_fdsn.dataselect_requests`.
+
+`tests/test_cli.py` is the end-to-end test: it runs `download --non-interactive` through `CliRunner` against `fake_fdsn`. The CLI starts its own event loop, so the tests call it with `await asyncio.to_thread(runner.invoke, ...)`; otherwise it blocks the loop that serves the fake FDSN.
 
 Test modules import constants and types from `conftest` directly (`from conftest import STATION_TEXT`). When changing download, writer or rerun behaviour, extend `tests/test_manager.py::test_download`. It runs a full download twice and checks that the second run makes no new requests.
 

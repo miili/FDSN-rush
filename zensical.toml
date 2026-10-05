@@ -17,6 +17,7 @@ nav = [
     { "Resuming and updating archives" = "guides/resuming.md" },
     { "Restricted data with EIDA tokens" = "guides/restricted-data.md" },
     { "Servers and performance" = "guides/performance.md" },
+    { "Scripting and automation" = "guides/scripting.md" },
     { "Working with the archive" = "guides/using-the-archive.md" },
     { "Converting MiniSEED to SDS" = "guides/convert.md" },
   ] },
