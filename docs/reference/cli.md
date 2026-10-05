@@ -44,7 +44,7 @@ fdsn-rush download [OPTIONS] FILE
 :   Show debug output, including the request URLs.
 
 `-n`, `--non-interactive`
-:   Run without console output except one JSON report on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
+:   Run without console output except a few `key: value` lines on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
 
 Every run writes `fdsn-rush.log` and `fdsn-rush-stats.json` into the SDS archive.
 

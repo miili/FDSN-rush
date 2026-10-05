@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import sys
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated
 
 import rich
 import typer
@@ -14,7 +13,7 @@ from rich.logging import RichHandler
 
 from fdsn_rush import __version__
 from fdsn_rush.convert import convert_sds
-from fdsn_rush.manager import LOG_FILE_NAME, FDSNDownloadManager, Report
+from fdsn_rush.manager import LOG_FILE_NAME, STATS_FILE_NAME, FDSNDownloadManager
 from fdsn_rush.stats import live_view
 
 FORMAT = "%(message)s"
@@ -24,6 +23,8 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(tracebacks_show_locals=False)],
 )
+
+logger = logging.getLogger(__name__)
 
 EXIT_CODES = {"ok": 0, "error": 1, "invalid_config": 2, "partial": 3}
 
@@ -63,12 +64,6 @@ def init():
     rich.print_json(client.model_dump_json())
 
 
-def _finish(report: Report) -> NoReturn:
-    """Print the report as the only output and exit with its status code."""
-    sys.stdout.write(report.model_dump_json(exclude_none=True) + "\n")
-    raise typer.Exit(EXIT_CODES[report.status])
-
-
 @app.command()
 def download(
     file: Annotated[
@@ -92,13 +87,19 @@ def download(
             "--non-interactive",
             "-n",
             help=(
-                "No live view and no console output except one JSON report "
+                "No live view and no console output except a few key: value lines "
                 "on stdout. Exit code: 0 ok, 1 error, 2 invalid config, 3 partial."
             ),
         ),
     ] = False,
 ) -> None:
     """Download data from FDSN to local SDS archive."""
+
+    def report(key: str, value: object) -> None:
+        """Print `key: value`. This is all `--non-interactive` prints."""
+        if non_interactive:
+            sys.stdout.write(f"{key}: {' '.join(str(value).split())}\n")
+
     logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
     if non_interactive:
         rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
@@ -108,7 +109,9 @@ def download(
     except (OSError, ValueError) as e:
         if not non_interactive:
             raise
-        _finish(Report(status="invalid_config", error=str(e)))
+        report("error", e)
+        report("status", "invalid_config")
+        raise typer.Exit(EXIT_CODES["invalid_config"]) from e
 
     archive = client.writer.sds_archive
     archive.mkdir(parents=True, exist_ok=True)
@@ -117,11 +120,29 @@ def download(
         logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     )
     logging.root.addHandler(log_file)
+    report("log_file", archive / LOG_FILE_NAME)
+    report("stats_file", archive / STATS_FILE_NAME)
 
     if non_interactive:
-        with contextlib.suppress(Exception):  # kept in the report and the log file
+        status = "ok"
+        try:
             asyncio.run(client.download(metadata_only=metadata_only))
-        _finish(client.report())
+        except Exception as e:
+            logger.exception("Download failed")
+            # TaskGroup wraps worker errors in an ExceptionGroup
+            leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
+            report("error", f"{type(leaf).__name__}: {leaf}")
+            status = "error"
+        stats = client.stats_report()
+        n_failed = sum(c.n_failed for c in stats.clients)
+        report("files", stats.writer.total_files_saved)
+        report("no_data", sum(c.n_no_data for c in stats.clients))
+        report("failed", n_failed)
+        report("elapsed", f"{stats.manager.elapsed_seconds}s")
+        if status == "ok" and n_failed:
+            status = "partial"
+        report("status", status)
+        raise typer.Exit(EXIT_CODES[status])
 
     async def run_download() -> None:
         download = asyncio.create_task(client.download(metadata_only=metadata_only))

@@ -101,7 +101,7 @@ async def test_download(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
     }
     assert not list(archive.glob("**/*.partial"))
     # every run keeps a stats file in the archive
-    assert '"status":"ok"' in (archive / "fdsn-rush-stats.json").read_text()
+    assert '"total_files_saved":10' in (archive / "fdsn-rush-stats.json").read_text()
     assert (manager.metadata_path / "XX.xml").read_text() == "<FDSNStationXML/>"
 
     # EHE returned 404 and is logged so it is not requested again

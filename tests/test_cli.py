@@ -32,6 +32,11 @@ def _restore_root_logging() -> Iterator[None]:
     logging.root.handlers = handlers
 
 
+def _report(stdout: str) -> dict[str, str]:
+    """Parse the `key: value` lines printed by `--non-interactive`."""
+    return dict(line.split(": ", 1) for line in stdout.splitlines())
+
+
 def _config(tmp_path: Path, url: str, selection: str = "XX.STA01") -> Path:
     manager = FDSNDownloadManager(
         writer=SDSWriter(sds_archive=tmp_path / "sds"),
@@ -59,10 +64,11 @@ async def test_non_interactive_downloads_one_day(
 
     assert result.exit_code == 0, result.stderr
 
-    # stdout is exactly one JSON document
-    report = json.loads(result.stdout)
+    report = _report(result.stdout)
     assert report["status"] == "ok"
     assert "error" not in report
+    assert report["files"] == "3"
+    assert report["failed"] == "0"
     assert result.stderr == ""  # quiet: details are in the log file
 
     # one day of three channels in the SDS archive
@@ -75,23 +81,21 @@ async def test_non_interactive_downloads_one_day(
     assert (tmp_path / "metadata" / "XX.xml").exists()
     assert not list(sds.glob("**/*.partial"))
 
-    # stats
-    stats = report["stats"]
-    assert stats["writer"]["total_files_saved"] == 3
-    assert stats["writer"]["total_bytes_written"] > 0
-    (client,) = stats["clients"]
+    # stats file
+    sds_stats = json.loads((sds / "fdsn-rush-stats.json").read_text())
+    assert report["stats_file"] == str(sds / "fdsn-rush-stats.json")
+    assert sds_stats["writer"]["total_files_saved"] == 3
+    assert sds_stats["writer"]["total_bytes_written"] > 0
+    (client,) = sds_stats["clients"]
     assert client["url"] == fake_fdsn.url
     assert client["n_requests"] == 3
     assert client["n_completed"] == 3
     assert client["n_failed"] == 0
     assert client["n_no_data"] == 0
-    assert stats["manager"]["elapsed_seconds"] > 0
+    assert sds_stats["manager"]["elapsed_seconds"] > 0
     assert len(fake_fdsn.dataselect_requests) == 3
 
-    # the summary is written to the stats file and the log to the archive
-    written = json.loads((sds / "fdsn-rush-stats.json").read_text())
-    assert written["status"] == "ok"
-    assert written["stats"] == report["stats"]
+    # the log is in the archive
     assert report["log_file"] == str(sds / "fdsn-rush.log")
     log = (sds / "fdsn-rush.log").read_text()
     assert "Starting download" in log
@@ -111,18 +115,20 @@ async def test_non_interactive_reports_no_data(
     )
 
     assert result.exit_code == 0, result.stderr
-    (client,) = json.loads(result.stdout)["stats"]["clients"]
-    assert client["n_no_data"] == 1  # EHE
-    assert client["n_failed"] == 0
+    report = _report(result.stdout)
+    assert report["status"] == "ok"
+    assert report["no_data"] == "1"  # EHE
+    assert report["failed"] == "0"
 
 
 def test_non_interactive_invalid_config(tmp_path: Path) -> None:
     result = runner.invoke(app, ["download", str(tmp_path / "missing.json"), "-n"])
 
     assert result.exit_code == 2
-    report = json.loads(result.stdout)
+    report = _report(result.stdout)
     assert report["status"] == "invalid_config"
-    assert "stats" not in report
+    assert "missing.json" in report["error"]
+    assert "files" not in report
 
 
 def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
@@ -131,7 +137,7 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     result = runner.invoke(app, ["download", str(config), "-n"])
 
     assert result.exit_code == 1
-    report = json.loads(result.stdout)
+    report = _report(result.stdout)
     assert report["status"] == "error"
     assert report["error"]
     assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
@@ -142,23 +148,21 @@ async def test_stats_file_is_updated_per_file(
 ) -> None:
     """The stats file is rewritten at the start, when files finish and at the end."""
     manager = FDSNDownloadManager.load(_config(tmp_path, fake_fdsn.url))
-    reports = []
-    write_report = FDSNDownloadManager._write_report
+    n_completed: list[int] = []
+    write_stats = FDSNDownloadManager._write_stats
 
     def spy(self: FDSNDownloadManager, path: Path) -> None:
-        reports.append(self.report())
-        write_report(self, path)
+        n_completed.append(self.stats_report().clients[0].n_completed)
+        write_stats(self, path)
 
-    monkeypatch.setattr(FDSNDownloadManager, "_write_report", spy)
+    monkeypatch.setattr(FDSNDownloadManager, "_write_stats", spy)
 
     await manager.download()
 
-    assert reports[0].status == "running"
-    assert reports[-1].status == "ok"
-    assert len(reports) > 2  # start, at least one finished file, end
-    assert any(
-        r.status == "running" and r.stats.clients[0].n_completed > 0 for r in reports
-    )
+    assert n_completed[0] == 0
+    assert n_completed[-1] == 3
+    assert len(n_completed) > 2  # start, at least one finished file, end
+    assert 0 < max(n_completed[1:-1]) <= 3  # progress was visible while running
 
 
 async def test_partial_when_downloads_failed(
@@ -175,4 +179,4 @@ async def test_partial_when_downloads_failed(
     )
 
     assert result.exit_code == 3
-    assert json.loads(result.stdout)["status"] == "partial"
+    assert _report(result.stdout)["status"] == "partial"

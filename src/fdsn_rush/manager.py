@@ -5,7 +5,7 @@ import logging
 from datetime import date, datetime, timedelta
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
@@ -28,17 +28,6 @@ class StatsReport(BaseModel):
     manager: FDSNDownloadManagerStats
     writer: SDSWriterStats
     clients: list[FDSNClientStats]
-
-
-class Report(BaseModel):
-    """Compact run report, written to the stats file and printed by `download -n`."""
-
-    status: Literal["running", "ok", "partial", "error", "invalid_config"] = "running"
-    error: str | None = None
-    updated: datetime = Field(default_factory=datetime_now)
-    log_file: Path | None = None
-    stats_file: Path | None = None
-    stats: StatsReport | None = None
 
 
 class FDSNDownloadManagerStats(Stats):
@@ -121,8 +110,6 @@ class FDSNDownloadManager(BaseModel):
     )
 
     _file: Path | None = PrivateAttr(default=None)
-    _status: Literal["running", "ok", "partial", "error"] = PrivateAttr("running")
-    _error: str | None = PrivateAttr(None)
     _file_done: asyncio.Event = PrivateAttr(default_factory=asyncio.Event)
     _stats: FDSNDownloadManagerStats = PrivateAttr(
         default_factory=FDSNDownloadManagerStats
@@ -236,8 +223,8 @@ class FDSNDownloadManager(BaseModel):
     async def download(self, metadata_only: bool = False):
         """Download data using all configured clients.
 
-        `<sds_archive>/fdsn-rush-stats.json` is rewritten whenever a client finishes
-        a file, see `report()`.
+        `<sds_archive>/fdsn-rush-stats.json` is rewritten at the start, whenever a
+        client finishes a file and at the end.
 
         Args:
             metadata_only: If True, only download metadata without downloading the data files.
@@ -247,7 +234,7 @@ class FDSNDownloadManager(BaseModel):
 
         async def update_stats_file() -> None:
             while True:
-                self._write_report(stats_file)
+                self._write_stats(stats_file)
                 await self._file_done.wait()
                 self._file_done.clear()
 
@@ -260,18 +247,10 @@ class FDSNDownloadManager(BaseModel):
                     for client in self.clients:
                         tg.create_task(self._download_from_client(client, self.writer))
                 logger.info("All downloads completed successfully.")
-            n_failed = sum(client._stats.n_failed for client in self.clients)
-            self._status = "partial" if n_failed else "ok"
-        except BaseException as e:
-            # TaskGroup wraps worker errors in an ExceptionGroup
-            leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
-            self._status, self._error = "error", f"{type(leaf).__name__}: {leaf}"
-            logger.exception("Download failed")
-            raise
         finally:
             updater.cancel()
             self._stats.end_time = datetime_now()
-            self._write_report(stats_file)
+            self._write_stats(stats_file)
 
     def stats_report(self) -> StatsReport:
         """Return the run statistics of the manager, writer and clients."""
@@ -281,21 +260,10 @@ class FDSNDownloadManager(BaseModel):
             clients=[client._stats for client in self.clients],
         )
 
-    def report(self) -> Report:
-        """Return the current status and statistics of the run."""
-        archive = self.writer.sds_archive
-        return Report(
-            status=self._status,
-            error=self._error,
-            log_file=archive / LOG_FILE_NAME,
-            stats_file=archive / STATS_FILE_NAME,
-            stats=self.stats_report(),
-        )
-
-    def _write_report(self, path: Path) -> None:
+    def _write_stats(self, path: Path) -> None:
         """Replace `path` atomically, so a polling reader never sees half a file."""
         tmp = path.with_suffix(".tmp")
-        tmp.write_text(self.report().model_dump_json(exclude_none=True))
+        tmp.write_text(self.stats_report().model_dump_json(exclude_none=True))
         tmp.replace(path)
 
     async def download_metadata(self):
