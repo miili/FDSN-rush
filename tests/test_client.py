@@ -4,17 +4,18 @@ from datetime import date
 
 from conftest import FakeFDSN
 
-from fdsn_rush.client import FDSNClient, _fdsn_time
-from fdsn_rush.utils import NSL
+from fdsn_rush.client import FDSNClient
+from fdsn_rush.selection import StationSelection
+from fdsn_rush.utils import NSL, fdsn_time
 
 
-def test_fdsn_time() -> None:
-    assert _fdsn_time(date(2024, 1, 1)) == "2024-01-01T00:00:00"
+def testfdsn_time() -> None:
+    assert fdsn_time(date(2024, 1, 1)) == "2024-01-01T00:00:00"
 
 
 async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
-    selection = [NSL.parse("XX.STA01"), NSL.parse("YY.STA01"), NSL.parse("XX.STA02")]
+    selection = StationSelection(stations=["XX.STA01", "YY.STA01", "XX.STA02"])
 
     await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
 
@@ -30,12 +31,26 @@ async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
         ["XX", "STA02", "*", "*", "2024-01-01T00:00:00", "2024-01-03T00:00:00"],
     ]
     assert [r["selection"][0][0] for r in requests] == ["XX", "YY"]
+    assert [s.nsl.pretty for s in client.available_stations] == [
+        "XX.STA01.",
+        "XX.STA02.",
+    ]
+
+
+async def test_prepare_twice_replaces_stations(fake_fdsn: FakeFDSN) -> None:
+    client = FDSNClient(url=fake_fdsn.url)
+    selection = StationSelection(stations=["XX"])
+
+    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+
+    assert client.available_stations.n_stations == 3
 
 
 async def test_prepare_keeps_selections_apart(fake_fdsn: FakeFDSN) -> None:
     """One line per selection: no cross product, a wildcard stays a wildcard."""
     client = FDSNClient(url=fake_fdsn.url)
-    selection = [NSL.parse("XX.STA01."), NSL.parse("XX.STA02.10")]
+    selection = StationSelection(stations=["XX.STA01.", "XX.STA02.10"])
 
     await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
 

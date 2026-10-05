@@ -35,7 +35,7 @@ Add one client per data centre when your networks are archived in different plac
   { "url": "https://geofon.gfz.de/" },
   { "url": "https://webservices.ingv.it/" }
 ],
-"station_selection": ["GE", "IV"]
+"station_selection": {"selection": "StationSelection", "stations": ["GE", "IV"]}
 ```
 
 Each client downloads every station *it* offers that matches `station_selection`.

@@ -10,32 +10,33 @@ A download is configured in a single JSON file. Generate one with all defaults f
 fdsn-rush init > config.json
 ```
 
+??? example "Default configuration"
+
+    ```python exec="on" result="json"
+    from fdsn_rush.manager import FDSNDownloadManager
+
+    print(FDSNDownloadManager().model_dump_json(indent=2))
+    ```
+
 You can leave out any option, and it takes its default. The smallest useful configuration is:
 
 ```json title="config.json"
 {
-  "station_selection": ["GE.APE"],
+  "station_selection": {"selection": "StationSelection", "stations": ["GE.APE"]},
   "time_range": ["2026-09-01", "2026-09-03"]
 }
 ```
 
 The file is validated strictly when it is loaded. Malformed values are reported with the name of the option before any request is made. Relative paths are resolved against the directory you run `fdsn-rush` from.
 
-!!! warning "Check the spelling of options"
-
-    Unknown options are ignored. A misspelled option such as `station_selecton` therefore leaves the real option at its default.
+Unknown options are an error, so a misspelled option such as `station_selecton` stops the run instead of being ignored. Run [`fdsn-rush check`](cli.md#check) to find them.
 
 ## Top level
 
 `station_selection`
-:   **List of station codes** · default `["2D.."]`
+:   **Object** · default: all stations of network `2D` · see [Station selection](#station-selection)
 
-    Stations to download, as `NET.STA.LOC` codes. Empty parts match anything, and codes may contain the wildcards `*`, `?` and `[...]`. At least one entry is required. See [Selecting stations and channels](../guides/selecting-data.md#stations).
-
-`station_blacklist`
-:   **List of station codes** · default `[]`
-
-    Stations to exclude, in the same syntax as `station_selection`.
+    Which stations to download: by code, in a bounding box or within a radius.
 
 `time_range`
 :   **Pair of dates** · default: the last seven days, `["<7 days ago>", "today"]`
@@ -72,6 +73,84 @@ The file is validated strictly when it is loaded. Malformed values are reported 
 
 `clients`
 :   **List of objects** · default: one GEOFON client · see [Clients](#clients)
+
+## Station selection
+
+`station_selection` picks the stations by one of three methods, chosen with `selection`. The FDSN server does the selecting. Each client queries its own server with the same selection.
+
+=== "By code"
+
+    ```python exec="on" result="json"
+    from fdsn_rush.selection import StationSelection
+
+    selection = StationSelection(stations=["GE", "IV.CPOZ"])
+    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    ```
+
+=== "Bounding box"
+
+    ```python exec="on" result="json"
+    from fdsn_rush.selection import GeographicSelection
+
+    selection = GeographicSelection()
+    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    ```
+
+=== "Radius"
+
+    ```python exec="on" result="json"
+    from fdsn_rush.selection import RadiusSelection
+
+    selection = RadiusSelection()
+    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    ```
+
+The defaults of the bounding box and the radius cover the Campi Flegrei caldera, Italy.
+
+`selection`
+:   **`"StationSelection"`, `"GeographicSelection"` or `"RadiusSelection"`** · required
+
+    The selection method. It decides which of the options below apply.
+
+`stations`
+:   **List of station codes** · default `["2D.."]` · `StationSelection` only
+
+    Stations to download, as `NET.STA.LOC` codes. The network code is required and explicit. Station and location codes may be left empty to match anything, or contain the wildcards `*` and `?`. At least one entry is required. See [Selecting stations and channels](../guides/selecting-data.md#stations).
+
+`minlatitude`, `maxlatitude`
+:   **Number (degrees)** · default `40.68`, `40.98` · `GeographicSelection` only
+
+    Latitude bounds of the box, inclusive. `minlatitude` must be smaller than `maxlatitude`.
+
+`minlongitude`, `maxlongitude`
+:   **Number (degrees)** · default `13.94`, `14.34` · `GeographicSelection` only
+
+    Longitude bounds of the box, inclusive. `minlongitude` must be smaller than `maxlongitude`, so a box cannot cross the antimeridian.
+
+`latitude`, `longitude`
+:   **Number (degrees)** · default `40.827`, `14.139` · `RadiusSelection` only
+
+    Centre of the circle.
+
+`minradius`, `maxradius`
+:   **Number (degrees)** · default `0.0`, `0.15` · `RadiusSelection` only
+
+    Stations between `minradius` and `maxradius` from the centre are selected. A `minradius` above `0` selects a ring.
+
+`networks`
+:   **List of network codes** · default `[]` (all networks) · `GeographicSelection` and `RadiusSelection`
+
+    Limits the area to these networks. Codes are explicit, without wildcards.
+
+`exclude_stations`
+:   **List of station codes** · default `[]`
+
+    Stations to drop from the selection, as `NET.STA.LOC` codes. They are matched locally: empty parts match anything, `--` is the blank location, and the wildcards `*`, `?` and `[...]` all work.
+
+`include_restricted`
+:   **Boolean** · default `true`
+
+    Include stations with restricted data. Set it to `false` if you have no [EIDA token](../guides/restricted-data.md) for them, so they are not requested at all.
 
 ## Writer
 

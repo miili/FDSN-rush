@@ -8,7 +8,7 @@ This page takes you from installation to a working archive. You will download tw
 
 ## Install
 
-FDSN Rush requires **Python 3.11 or newer**. Install it as a standalone command-line tool:
+FDSN Rush requires **Python 3.12 or newer**. Install it as a standalone command-line tool:
 
 === "uv"
 
@@ -55,7 +55,7 @@ fdsn-rush init > config.json
 
 Open `config.json` and change the station selection and the time range, the two values you will change most often:
 
-```json title="config.json" hl_lines="22-29 36"
+```json title="config.json" hl_lines="22-34 40"
 {
   "writer": {
     "sds_archive": "data",
@@ -81,16 +81,20 @@ Open `config.json` and change the station selection and the time range, the two 
     "2026-09-01",
     "2026-09-03"
   ],
-  "station_selection": [
-    "GE.APE",
-    "GE.STU"
-  ],
+  "station_selection": {
+    "selection": "StationSelection",
+    "exclude_stations": [],
+    "include_restricted": true,
+    "stations": [
+      "GE.APE.",
+      "GE.STU."
+    ]
+  },
   "channel_priority": [
     "HH[ZNE12]",
     "EH[ZNE12]",
     "HN[ZNE12]"
   ],
-  "station_blacklist": [],
   "min_channels_per_station": 3,
   "min_sampling_rate": 100.0,
   "max_sampling_rate": 200.0
@@ -169,7 +173,7 @@ Nothing is downloaded twice. Extend the time range, or use `"today"` as the end,
 
 ## Next steps
 
-- [Select stations and channels](guides/selecting-data.md): wildcards, blacklists and channel priorities.
+- [Select stations and channels](guides/selecting-data.md): by code, area or radius, exclusions and channel priorities.
 - [Restricted data with EIDA tokens](guides/restricted-data.md): download embargoed data.
 - [Configuration reference](reference/configuration.md): every option explained.
 

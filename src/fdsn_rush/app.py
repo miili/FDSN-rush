@@ -117,11 +117,13 @@ def download(
 
     stats = manager.stats_report()
     n_failed = sum(c.n_failed for c in stats.clients)
+    n_queries_failed = sum(c.n_station_queries_failed for c in stats.clients)
     report("files", stats.writer.total_files_saved)
     report("no_data", sum(c.n_no_data for c in stats.clients))
     report("failed", n_failed)
+    report("failed_queries", n_queries_failed)
     report("elapsed", f"{stats.manager.elapsed_seconds}s")
-    if status == "ok" and n_failed:
+    if status == "ok" and (n_failed or n_queries_failed):
         status = "partial"
     report("status", status)
     raise typer.Exit(EXIT_CODES[status])

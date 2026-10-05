@@ -4,7 +4,7 @@ FDSN Rush: async CLI that downloads seismic waveforms from FDSN web services int
 
 ## Commands
 
-Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling build). Requires Python 3.11+.
+Project is managed with `uv` (Python package `fdsn_rush`, src layout, hatchling build). Requires Python 3.12+.
 
 ```sh
 uv sync                                   # install incl. dev group (pytest, pytest-asyncio, ruff, prek)
@@ -16,8 +16,8 @@ uv run fdsn-rush download config.json -n  # non-interactive: only key: value lin
 uv run fdsn-rush convert in/ out-sds/ --steim 2 --network XX
 uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
-uv run --only-group docs zensical serve   # docs preview on localhost:8000
-uv run --only-group docs zensical build --clean --strict  # what CI runs
+uv run --group docs zensical serve        # docs preview on localhost:8000
+uv run --group docs zensical build --clean --strict  # what CI runs
 (cd reference && just)                    # fetch FDSN spec PDFs + .txt (needs just, curl, pdftotext)
 ```
 
@@ -25,12 +25,12 @@ If another virtualenv is active, `uv` ignores the project `.venv` and warns. Pre
 
 CI (`.github/workflows/`):
 - `pre-commit.yaml` runs the `.pre-commit-config.yaml` hooks through prek: ruff lint + format, plus whitespace/EOF/yaml checks.
-- `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.11–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
+- `tests.yaml` runs `uv sync --locked && uv run pytest` on Python 3.12–3.14. Keep `uv.lock` in sync (`uv lock`) or CI fails.
 - `docs.yaml` builds the docs strictly on every PR and push, and deploys `site/` to GitHub Pages from `main` only. The repo's Pages source must be set to "GitHub Actions".
 - `release.yaml` builds the sdist and wheel on every push to `main` (and on PRs touching packaging). On a `v*` tag it also runs `tests.yaml` (via `workflow_call`), publishes to PyPI with trusted publishing (environment `pypi`), and creates a GitHub release with generated notes.
 - `astral-sh/setup-uv` has no floating major tags. Pin a full version (`@v10.2.0`).
 
-Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py311` target from `requires-python`. Rules that bite:
+Ruff: the rule set is in `pyproject.toml`, and ruff infers the `py312` target from `requires-python`. Rules that bite:
 - `T20`: no `print`.
 - `DTZ`: datetimes must be timezone-aware.
 - `G`: no f-strings in logging calls; use `%s` args.
@@ -45,12 +45,14 @@ All modules are in `src/fdsn_rush/`.
 
 - `app.py`: Typer CLI (`init`, `check`, `metadata`, `download`, `convert`). `download` loads the config, adds a file handler for `<config>.log` (next to the config file) to the root logger, runs `manager.download()` with `stats.live_view()`, then prints the summary and exits with `EXIT_CODES[status]` (0 ok, 1 error, 2 partial). `-n` sets `utils.NON_INTERACTIVE` and `rich.reconfigure(quiet=True)`, which also hides the live view. `metadata` runs `manager.download(metadata_only=True)`; `check` only loads (validates) the config.
 - `manager.py`: `FDSNDownloadManager` (pydantic model) **is** the JSON config schema. `load()` validates with `strict=True`. Flow: `prepare()` (clients fetch station inventory, writer scans the archive) → `download_metadata()` (StationXML per network into `metadata_path/<NET>.xml`) → per client `get_work()` → `client.download(writer)`. Clients run concurrently in a `TaskGroup`. `download()` rewrites `<sds_archive>/fdsn-rush-stats.json` (a `StatsReport`, atomic) at the start, at the end and whenever a client sets the shared `_file_done` event (once per finished work item). Non-interactive output goes through `utils.report(key, value)`, a no-op unless `utils.NON_INTERACTIVE` is set; call it from any module. Keep it to a few lines: agents pay for every token. `status:` is always last.
-  - `get_work()` builds one `DownloadDayfile` per channel per day. `channel_priority` is an ordered list of fnmatch patterns, and the first pattern that yields `>= min_channels_per_station` channels wins for that station-day. Dayfiles already present in the archive are skipped.
-- `client.py`: `FDSNClient` does all HTTP via aiohttp against `/fdsnws/station/1/query` (inventory: one POSTed text-format request per network, merged with `Stations.extend`, and a body containing `Error 404` is treated as "no stations"; metadata: StationXML, also POSTed) and `/fdsnws/dataselect/1/query` (or `queryauth` with an EIDA token → digest auth middleware). Downloads use an `asyncio.Queue` of dayfiles, `n_workers` workers, and a rate limiter (`asyncio.Condition` ticked at `rate_limit` Hz; it adopts the server's `X-RateLimit-Limit` header). Data is streamed in `chunk_size` chunks straight to the writer.
+  - `get_work()` builds one `DownloadDayfile` per channel per day for every station in `client.available_stations`. The server has already applied the selection, so nothing is filtered locally. `channel_priority` is an ordered list of fnmatch patterns, and the first pattern that yields `>= min_channels_per_station` channels wins for that station-day. Dayfiles already present in the archive are skipped.
+- `client.py`: `FDSNClient` does all HTTP via aiohttp. `prepare(selection, ...)` replaces `available_stations` with `selection.get_available_stations(self, ...)`. It also queries `/fdsnws/station/1/query` for metadata (StationXML, POSTed) and `/fdsnws/dataselect/1/query` (or `queryauth` with an EIDA token → digest auth middleware). Downloads use an `asyncio.Queue` of dayfiles, `n_workers` workers, and a rate limiter (`asyncio.Condition` ticked at `rate_limit` Hz; it adopts the server's `X-RateLimit-Limit` header). Data is streamed in `chunk_size` chunks straight to the writer.
+- `selection.py`: `station_selection` in the config is a `SelectionType`, a union discriminated by `selection`: `StationSelection` (`stations` NSL patterns), `GeographicSelection` (bounding box) and `RadiusSelection` (`latitude`, `longitude`, `minradius`, `maxradius`). The box and radius take `networks` and default to Campi Flegrei. All three take `exclude_stations` and `include_restricted`. `get_available_stations()` POSTs the requests that the subclass yields from `_requests()` (one per network for `StationSelection`, one with geographic options otherwise). A 404 means "no stations" and does not fail the others. `exclude_stations` is then applied locally with `Stations.remove`. `client.py` imports `Selection` only under `TYPE_CHECKING`, because `selection.py` imports from `client.py`.
 - `writer.py`: `SDSWriter` appends chunks to `<sds path>.partial` under per-file async locks. `done()` loads the partial file with pyrocko, degaps it, drops traces shorter than `min_length_seconds`, chops to the UTC day, saves as STEIM1/2 MiniSEED, and removes the partial file. `prepare()` deletes leftover `.partial` and zero-byte files. It can optionally register files in a pyrocko Squirrel env.
 - `remote_log.py`: `RemoteLog` persists 404s (read from `ClientResponseError.status`; `.code` is deprecated) as CSV in `<sds_archive>/remote_errors.log`, so known-missing NSLC/day/host combos are skipped on rerun. Only codes in `LOG_ERROR_CODES` are recorded.
 - `models/station.py`: `Channel`/`Station`/`Stations` are parsed from FDSN station text format (17 pipe-separated columns). `parse_stations` drops `AUX_CHANNELS` (SOH channels listed in `utils.py`). `SDS_TEMPLATE` defines the on-disk path, with the julian day zero-padded to 3 digits.
-- `utils.py`: `NSL` (an Annotated `_NSL` NamedTuple that parses `"NET.STA.LOC"`). `selector.match(station_nsl)` treats `self` as the pattern: empty parts are wildcards, and the rest are fnmatch patterns (e.g. `XX.STA*`)., `NSLC`, `Date` (accepts/serializes `"today"`/`"yesterday"`), `ByteSizeStr`, `FilePath`, `EIDADetails`, `datetime_now()`/`date_today()` (UTC).
+- `base.py`: `Model`, the base of every user-facing config model (`FDSNDownloadManager`, `FDSNClient`, `SDSWriter`, the selections). It sets `extra="forbid"`, so unknown or removed options fail validation.
+- `utils.py`: `NSL`, a NamedTuple that parses `"NET.STA.LOC"`, and `NSLType`, its Annotated pydantic type. Use `NSLType` for model fields and `NSL` everywhere else. `selector.match(station_nsl)` treats `self` as the pattern: each empty part is a wildcard, `--` is the blank location, and the rest are fnmatch patterns (e.g. `XX.STA*`). `fdsn_time`, `fdsn_float` (fixed-point, never scientific notation) and `fdsn_post_body` format FDSN requests. Codes with `*`, `?` or `[` skip the SEED length check. `NSLC`, `Date` (accepts/serializes `"today"`/`"yesterday"`), `ByteSizeStr`, `FilePath`, `EIDADetails`, `datetime_now()`/`date_today()` (UTC).
 - `stats.py`: `Stats` base model. Every instance self-registers in a global `WeakValueDictionary`, and `live_view()` renders all of them as a Rich `Live` panel sorted by `_pos`. To add a stats panel, subclass `Stats` and implement `_render(table)`.
 - `convert.py`: standalone MiniSEED → SDS converter (`convert_sds`). It has its own `SDS_TEMPLATE` copy and uses bounded concurrency via an `asyncio.Queue`.
 
@@ -77,21 +79,25 @@ Spec errata (the PDFs contradict themselves; do not copy these):
 
 Differences between the code and the spec, to check when working on `client.py`:
 - Fixed: waveform requests send a blank location as `--`, times as `YYYY-MM-DDTHH:MM:SS` (`_fdsn_time`) and `format=miniseed`, and inventory requests group by sorted network so each network is queried once. The fake server in `tests/conftest.py` rejects anything else with 400, so a regression fails `test_download`.
-- Fixed: station requests (`prepare`, `download_metadata`) are POSTed via `_post_body`: `key=value` option lines, then one `NET STA LOC * START END` line per selection, empty parts as `*`. This avoids the GET cross product (`A.1` + `B.2` becoming `A,B` x `1,2`) and URL length limits. Verified on IRIS and GEOFON. Why not a joined list: `location=,00` returns only `00` for `IU.ANMO` on IRIS, because an empty list entry is the *blank* code.
+- Fixed: station requests (`prepare`, `download_metadata`) are POSTed via `utils.fdsn_post_body`: `key=value` option lines, then one `NET STA LOC * START END` line per selection, empty parts as `*`. This avoids the GET cross product (`A.1` + `B.2` becoming `A,B` x `1,2`) and URL length limits. Verified on IRIS and GEOFON. Why not a joined list: `location=,00` returns only `00` for `IU.ANMO` on IRIS, because an empty list entry is the *blank* code.
 - Real servers: IRIS 301-redirects http and answers `location=` (empty) and `--` with blank-location channels only. Live checks are in `tests/test_live.py`.
-- Not used so far: `quality`, `minimumlength`, `longestonly`, `updatedafter`, `matchtimeseries`, `includerestricted`, `includeavailability`, geographic filters and the `version` method.
+- Used by `selection.py`: the bounding box, the radius search and `includerestricted` (sent only as `FALSE`, since `TRUE` is the default). Verified on INGV, GEOFON and IRIS.
+- Servers reject `[...]` in station codes with 400 (GEOFON, INGV), so `stations` and `networks` refuse it at validation. Only `*` and `?` work server-side. Network codes must be explicit (no wildcards, not empty), so the per-network requests never overlap. `Stations.extend` also skips stations it already holds.
+- Station query errors (`selection._query`): 404 and 204 mean no stations. 5xx, 429, timeouts and connection errors are retried (`RETRY_ATTEMPTS`, `RETRY_DELAY`, which conftest sets to 0). Other 4xx fail at once. Failures raise `client.StationQueryError`, which carries the stations of the other requests. `FDSNClient.prepare` keeps those and counts `n_station_queries_failed`, which makes the run `partial`. The manager raises only if every client failed. Option values go through `fdsn_float`.
+- Rejected by real servers, so not used: `matchtimeseries` (400 on GEOFON and INGV, 410 on IRIS) and `updatedafter` (400 on GEOFON, 404 on IRIS).
+- Not used so far: `quality`, `minimumlength`, `longestonly`, `includeavailability` and the `version` method.
 - Not in the spec at all: `/fdsnws/dataselect/1/auth` (EIDA token exchange) and the `X-RateLimit-Limit` header. 429 appears only as a label in `ERRORS`, and nothing retries it.
 - Text-format times have no zone, so `Channel.from_line` produces naive datetimes. That is harmless while only `.date()` is compared.
 
 ## Tests
 
-Tests are offline, except `tests/test_live.py`, which hits IRIS/GEOFON and only runs with `FDSN_RUSH_LIVE=1`. `asyncio_mode = "auto"` is set, so `async def test_*` needs no marker. Shared fixtures are in `tests/conftest.py`:
+Tests are offline, except `tests/test_live.py`, which hits IRIS, GEOFON and INGV (Campi Flegrei) and only runs with `FDSN_RUSH_LIVE=1`. `asyncio_mode = "auto"` is set, so `async def test_*` needs no marker. Shared fixtures are in `tests/conftest.py`:
 - `STATION_TEXT`: an inline FDSN station text inventory. It covers the cases the manager must handle:
   - STA01: HH channels, plus an LH channel with too low a sampling rate and an aux LDO channel.
   - STA02: EH channels only; the fake server returns 404 for EHE.
   - STA03: a single HHZ channel whose epoch ends on 2024-01-01.
 - `make_mseed`: a factory that builds real MiniSEED bytes with pyrocko.
-- `fake_fdsn`: an `aiohttp.test_utils.TestServer` serving station and dataselect queries. Point a `FDSNClient(url=fake_fdsn.url)` at it. Every dataselect query is recorded in `fake_fdsn.dataselect_requests`.
+- `fake_fdsn`: an `aiohttp.test_utils.TestServer` serving station and dataselect queries. Station queries return the `STATION_TEXT` lines that match a POSTed selection line (fnmatch, `--` is blank), or 404 if none match. Geographic options are ignored. Every station query is recorded in `fake_fdsn.station_requests`. `fake_fdsn.station_errors = {"XX": [503, 401]}` answers the next station queries for network `XX` with those status codes. Point a `FDSNClient(url=fake_fdsn.url)` at it. Every dataselect query is recorded in `fake_fdsn.dataselect_requests`.
 
 `tests/test_cli.py` is the end-to-end test: it runs `download --non-interactive` through `CliRunner` against `fake_fdsn`. The CLI starts its own event loop, so the tests call it with `await asyncio.to_thread(runner.invoke, ...)`; otherwise it blocks the loop that serves the fake FDSN.
 
@@ -114,8 +120,9 @@ The user docs are built with [Zensical](https://zensical.org) (config in `zensic
 - `docs/getting-started.md` is a walkthrough with real output from GEOFON (`GE.APE`, `GE.STU`).
 - `docs/guides/` holds task-oriented pages.
 - `docs/reference/` holds the configuration and CLI references.
+- [markdown-exec](https://pawamoy.github.io/markdown-exec/) runs ` ```python exec="on" ` blocks at build time, so CLI `--help` output (`result="ansi"`, via `typer.testing.CliRunner` with `FORCE_COLOR=1`) and config JSON (`result="json"`, from the models) stay current. The build therefore imports `fdsn_rush`: use `--group docs`, not `--only-group docs`. `docs/stylesheets/ansi.css` is copied from `markdown_exec/assets/` because Zensical has no markdown-exec plugin to inject it.
 
-Style: professional and hands-on. Lead with the command or config snippet, keep the explanation short, and state behaviour exactly (e.g. the `time_range` end is exclusive). Verify examples against the code or a real run before documenting them.
+Generate config snippets and CLI output with markdown-exec rather than pasting them. Style: professional and hands-on. Lead with the command or config snippet, keep the explanation short, and state behaviour exactly (e.g. the `time_range` end is exclusive). Verify examples against the code or a real run before documenting them.
 
 When you change behaviour, update the docs in the same change:
 - New or renamed config fields go into `docs/reference/configuration.md` as a `` `name` `` definition-list entry. `tests/test_docs.py` fails if a pydantic config field is missing.
@@ -126,8 +133,6 @@ When you change behaviour, update the docs in the same change:
 
 - `.venv` uses Python 3.14, which needs pyrocko ≥ 2026.6 and scipy ≥ 1.17 (older versions have no cp314 wheels and fail to build from source). If a sync tries to build scipy or pyrocko, upgrade the lock rather than installing system BLAS.
 - `Stats` instances register in a module-global registry, and `writer.FILE_LOCKS` is module-global too. Both are harmless in tests, but keep it in mind when you create many managers in one process.
-- `client.prepare()` appends to `available_stations`, so calling it twice on one client duplicates stations.
 - Clients download in parallel and each plans its work independently. Two clients serving the same station download the same day file concurrently into one `.partial` file. The docs warn about this, but it is not handled in code.
-- Config models use pydantic's default `extra="ignore"`, so misspelled options are silently dropped.
 - `convert` only scans files whose name contains a dot (`rglob("*.*")`). It appends to existing day files, so converting the same input twice duplicates data.
 - The git remote is `miili/fdsn-fetch` (the old name). The README badges point at `miili/FDSN-rush`.

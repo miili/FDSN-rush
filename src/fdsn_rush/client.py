@@ -4,16 +4,14 @@ import asyncio
 import logging
 import re
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
-from itertools import groupby
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, NoReturn
 
 import aiohttp
 from pydantic import (
-    BaseModel,
     ByteSize,
     Field,
     HttpUrl,
@@ -23,7 +21,8 @@ from pydantic import (
 )
 from rich.progress import Progress, TaskID
 
-from fdsn_rush.models.station import Channel, Stations, parse_stations
+from fdsn_rush.base import Model
+from fdsn_rush.models.station import Channel, Stations
 from fdsn_rush.stats import Stats
 from fdsn_rush.utils import (
     NSL,
@@ -31,12 +30,15 @@ from fdsn_rush.utils import (
     EIDADetails,
     FilePath,
     datetime_now,
+    fdsn_post_body,
+    fdsn_time,
     human_readable_bytes,
 )
 
 if TYPE_CHECKING:
     from rich.table import Table
 
+    from fdsn_rush.selection import Selection
     from fdsn_rush.writer import SDSWriter
 
 logger = logging.getLogger(__name__)
@@ -57,38 +59,30 @@ ERRORS = {
 }
 
 
+class StationQueryError(Exception):
+    """Station queries failed.
+
+    Attributes:
+        failed: Labels of the failed queries.
+        stations: Stations returned by the queries that succeeded.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        failed: list[str] | None = None,
+        stations: Stations | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.failed = failed or []
+        self.stations = stations or Stations()
+
+
 def _clean_params(params: dict[str, Any]) -> None:
     """Remove empty values from the parameters dictionary."""
     for key in list(params.keys()):
         if not params[key]:
             params.pop(key, None)
-
-
-def _fdsn_time(day: date) -> str:
-    """Format a date as the FDSN time string for midnight UTC, e.g. 2024-01-01T00:00:00."""
-    return datetime.combine(day, time(), tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S")
-
-
-def _post_body(
-    options: dict[str, str],
-    selection: Iterable[NSL],
-    starttime: date,
-    endtime: date,
-) -> str:
-    """Build the body of a station POST request.
-
-    Options are ``key=value`` lines followed by one ``NET STA LOC CHA START END``
-    line per selection. An empty selector part is a wildcard, so it becomes ``*``.
-    A list of lines, unlike comma-joined GET parameters, does not turn
-    ``A.1`` + ``B.2`` into the cross product ``A,B`` x ``1,2``.
-    """
-    start, end = _fdsn_time(starttime), _fdsn_time(endtime)
-    lines = [f"{key}={value}" for key, value in options.items()]
-    lines.extend(
-        f"{nsl.network or '*'} {nsl.station or '*'} {nsl.location or '*'} * {start} {end}"
-        for nsl in sorted(set(selection))
-    )
-    return "\n".join(lines) + "\n"
 
 
 def get_error_str(error_code: int) -> str:
@@ -145,6 +139,11 @@ class FDSNClientStats(Stats):
     n_failed: int = Field(
         default=0,
         description="Number of dayfiles that failed (HTTP errors other than 404, timeouts)",
+    )
+    n_station_queries_failed: int = Field(
+        default=0,
+        description="Number of station queries that failed (HTTP errors other than "
+        "404 and 204, timeouts), after retries",
     )
 
     _station_work_count: defaultdict[NSL, int] = PrivateAttr(
@@ -230,17 +229,17 @@ class FDSNClientStats(Stats):
             f" ↓{self.get_download_speed().human_readable()}/s"
             f" ({self._client.n_workers if self._client else '?'} worker)",
         )
-        table.add_row(
-            "Stations",
-            f"{self.n_stations_completed}/{self.n_stations} done",
-        )
+        stations = f"{self.n_stations_completed}/{self.n_stations} done"
+        if self.n_station_queries_failed:
+            stations += f" [red]({self.n_station_queries_failed} queries failed)[/red]"
+        table.add_row("Stations", stations)
         table.add_row(
             "Progress",
             self._progress,
         )
 
 
-class FDSNClient(BaseModel):
+class FDSNClient(Model):
     url: HttpUrl = Field(
         default=HttpUrl("https://geofon.gfz.de"),
         description="Base URL of the FDSN web service",
@@ -292,58 +291,31 @@ class FDSNClient(BaseModel):
 
     async def prepare(
         self,
-        selection: list[NSL],
+        selection: Selection,
         starttime: date,
         endtime: date,
     ) -> None:
-        """Fetch available stations from the FDSN service."""
-        self._stats.set_client(self)
+        """Fetch available stations from the FDSN service.
 
+        If some station queries fail, the stations of the others are kept and
+        the failures are counted in the stats.
+
+        Raises:
+            StationQueryError: If station queries failed and no station is left.
+        """
         logger.info("Preparing FDSN service: %s", self.url)
+        self._stats.set_client(self)
+        self.available_stations = Stations()
 
-        for network, nsls in groupby(
-            sorted(selection, key=lambda nsl: nsl.network),
-            key=lambda nsl: nsl.network,
-        ):
-            body = _post_body(
-                {"level": "channel", "format": "text", "nodata": "404"},
-                nsls,
-                starttime,
-                endtime,
-            )
-
-            async with (
-                aiohttp.ClientSession(
-                    base_url=str(self.url),
-                    timeout=aiohttp.ClientTimeout(total=self.timeout),
-                    headers=HEADERS,
-                ) as client,
-                client.post(
-                    "/fdsnws/station/1/query",
-                    data=body,
-                ) as response,
-            ):
-                logger.debug("Fetching available stations from %s", response.url)
-                try:
-                    response.raise_for_status()
-                except aiohttp.ClientResponseError as e:
-                    logger.error(
-                        "Failed to fetch stations from %s: %d %s error (%s)",
-                        self.url,
-                        e.status,
-                        get_error_str(e.status),
-                        e.message,
-                    )
-                data = await response.text()
-                if "Error 404" in data:
-                    logger.warning("No stations found for network: %s", network)
-                    continue
-
-                stations = parse_stations(data)
-                self.available_stations.extend(stations)
-                logger.info(
-                    "Fetched %d stations for network %s", stations.n_stations, network
-                )
+        try:
+            stations = await selection.get_available_stations(self, starttime, endtime)
+        except StationQueryError as e:
+            self._stats.n_station_queries_failed += len(e.failed)
+            if not e.stations.n_stations:
+                raise
+            logger.error("%s, continuing with %d stations", e, e.stations.n_stations)
+            stations = e.stations
+        self.available_stations = stations
 
         logger.info(
             "Got %d stations from %s",
@@ -408,7 +380,7 @@ class FDSNClient(BaseModel):
         """Fetch available stations from the FDSN service."""
         self._stats.set_client(self)
 
-        body = _post_body(
+        body = fdsn_post_body(
             {"level": "response", "format": "xml", "nodata": "404"},
             selection,
             starttime,
@@ -449,8 +421,8 @@ class FDSNClient(BaseModel):
             # A blank location code must be sent as "--"; omitting it matches any location
             "location": channel.nsl.location or "--",
             "channel": channel.code,
-            "starttime": _fdsn_time(date),
-            "endtime": _fdsn_time(date + timedelta(days=1)),
+            "starttime": fdsn_time(date),
+            "endtime": fdsn_time(date + timedelta(days=1)),
             "format": "miniseed",
             "nodata": "404",
         }
