@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from itertools import groupby
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
@@ -20,11 +23,42 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+LOG_FILE_NAME = "fdsn-rush.log"
+STATS_FILE_NAME = "fdsn-rush-stats.json"
+STATS_INTERVAL = 5.0  # seconds between rewrites of the stats file
+
 
 class StatsReport(BaseModel):
     manager: FDSNDownloadManagerStats
     writer: SDSWriterStats
     clients: list[FDSNClientStats]
+
+
+class Report(BaseModel):
+    """Compact run report, written to the stats file and printed by `download -n`."""
+
+    status: Literal["running", "ok", "partial", "error", "invalid_config"] = "running"
+    error: str | None = None
+    updated: datetime = Field(default_factory=datetime_now)
+    log_file: Path | None = None
+    stats_file: Path | None = None
+    stats: StatsReport | None = None
+
+
+@contextmanager
+def _log_to_file(path: Path) -> Iterator[None]:
+    """Also write the log, with UTC timestamps, to `path`."""
+    handler = logging.FileHandler(path)
+    handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    )
+    handler.formatter.converter = time.gmtime
+    logging.root.addHandler(handler)
+    try:
+        yield
+    finally:
+        logging.root.removeHandler(handler)
+        handler.close()
 
 
 class FDSNDownloadManagerStats(Stats):
@@ -107,6 +141,8 @@ class FDSNDownloadManager(BaseModel):
     )
 
     _file: Path | None = PrivateAttr(default=None)
+    _status: Literal["running", "ok", "partial", "error"] = PrivateAttr("running")
+    _error: str | None = PrivateAttr(None)
     _stats: FDSNDownloadManagerStats = PrivateAttr(
         default_factory=FDSNDownloadManagerStats
     )
@@ -219,29 +255,72 @@ class FDSNDownloadManager(BaseModel):
     async def download(self, metadata_only: bool = False):
         """Download data using all configured clients.
 
+        Logs to `<sds_archive>/fdsn-rush.log` and keeps `<sds_archive>/fdsn-rush-stats.json`
+        up to date while running, see `report()`.
+
         Args:
             metadata_only: If True, only download metadata without downloading the data files.
         """
-        try:
-            await self.prepare()
-            await self.download_metadata()
-            if metadata_only:
-                return
+        archive = self.writer.sds_archive
+        archive.mkdir(parents=True, exist_ok=True)
 
-            async with asyncio.TaskGroup() as tg:
-                for client in self.clients:
-                    tg.create_task(self._download_from_client(client, self.writer))
-            logger.info("All downloads completed successfully.")
-        finally:
-            self._stats.end_time = datetime_now()
+        async def write_report_regularly() -> None:
+            while True:
+                self._write_report(archive / STATS_FILE_NAME)
+                await asyncio.sleep(STATS_INTERVAL)
+
+        with _log_to_file(archive / LOG_FILE_NAME):
+            reporter = asyncio.create_task(write_report_regularly())
+            try:
+                await self._download(metadata_only)
+                n_failed = sum(client._stats.n_failed for client in self.clients)
+                self._status = "partial" if n_failed else "ok"
+            except BaseException as e:
+                # TaskGroup wraps worker errors in an ExceptionGroup
+                leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
+                self._status, self._error = "error", f"{type(leaf).__name__}: {leaf}"
+                logger.exception("Download failed")
+                raise
+            finally:
+                reporter.cancel()
+                self._stats.end_time = datetime_now()
+                self._write_report(archive / STATS_FILE_NAME)
+
+    async def _download(self, metadata_only: bool) -> None:
+        await self.prepare()
+        await self.download_metadata()
+        if metadata_only:
+            return
+
+        async with asyncio.TaskGroup() as tg:
+            for client in self.clients:
+                tg.create_task(self._download_from_client(client, self.writer))
+        logger.info("All downloads completed successfully.")
 
     def stats_report(self) -> StatsReport:
-        """Return the run statistics of the manager, writer and clients as JSON-able data."""
+        """Return the run statistics of the manager, writer and clients."""
         return StatsReport(
             manager=self._stats,
             writer=self.writer._stats,
             clients=[client._stats for client in self.clients],
         )
+
+    def report(self) -> Report:
+        """Return the current status and statistics of the run."""
+        archive = self.writer.sds_archive
+        return Report(
+            status=self._status,
+            error=self._error,
+            log_file=archive / LOG_FILE_NAME,
+            stats_file=archive / STATS_FILE_NAME,
+            stats=self.stats_report(),
+        )
+
+    def _write_report(self, path: Path) -> None:
+        """Replace `path` atomically, so a polling reader never sees half a file."""
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(self.report().model_dump_json(exclude_none=True))
+        tmp.replace(path)
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""

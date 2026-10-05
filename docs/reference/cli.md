@@ -44,13 +44,9 @@ fdsn-rush download [OPTIONS] FILE
 :   Show debug output, including the request URLs.
 
 `-n`, `--non-interactive`
-:   Run without the live view, for scripts and agents. Log lines go to stderr and to `<sds_archive>/fdsn-rush.log`, a JSON report goes to stdout, and the exit code reports the outcome. See [Scripting and automation](../guides/scripting.md).
+:   Run without console output except one JSON report on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
 
-`--stats-file PATH`
-:   Write the JSON report to `PATH` (needs `--non-interactive`). Default: `<sds_archive>/fdsn-rush-stats.json`.
-
-`--stats-interval SECONDS`
-:   How often the stats file is rewritten while running (needs `--non-interactive`). Default: `5`.
+Every run writes `fdsn-rush.log` and `fdsn-rush-stats.json` into the SDS archive.
 
 The command exits once all clients have finished. Running it again resumes or extends the archive. See [Resuming and updating archives](../guides/resuming.md).
 

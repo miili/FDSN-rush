@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -10,9 +12,9 @@ import typer
 from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
-from fdsn_rush import __version__, headless
+from fdsn_rush import __version__
 from fdsn_rush.convert import convert_sds
-from fdsn_rush.manager import FDSNDownloadManager
+from fdsn_rush.manager import FDSNDownloadManager, Report
 from fdsn_rush.stats import live_view
 
 FORMAT = "%(message)s"
@@ -22,6 +24,8 @@ logging.basicConfig(
     datefmt="[%X]",
     handlers=[RichHandler(tracebacks_show_locals=False)],
 )
+
+EXIT_CODES = {"ok": 0, "error": 1, "invalid_config": 2, "partial": 3}
 
 app = typer.Typer(
     name="fdsn-rush",
@@ -82,49 +86,29 @@ def download(
             "--non-interactive",
             "-n",
             help=(
-                "No live view. Log to stderr and to <sds_archive>/fdsn-rush.log, "
-                "print a JSON summary to stdout and exit with a status code."
+                "No live view and no console output except one JSON report "
+                "on stdout. Exit code: 0 ok, 1 error, 2 invalid config, 3 partial."
             ),
         ),
     ] = False,
-    stats_file: Annotated[
-        Path | None,
-        typer.Option(
-            "--stats-file",
-            help=(
-                "Write the JSON summary here (--non-interactive). "
-                "Default: <sds_archive>/fdsn-rush-stats.json"
-            ),
-        ),
-    ] = None,
-    stats_interval: Annotated[
-        float,
-        typer.Option(
-            "--stats-interval",
-            min=1.0,
-            help="Seconds between updates of the stats file (--non-interactive).",
-        ),
-    ] = 5.0,
 ) -> None:
     """Download data from FDSN to local SDS archive."""
-    log_level = logging.DEBUG if verbose >= 1 else logging.INFO
+    logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
 
     if non_interactive:
-        raise typer.Exit(
-            headless.run(
-                file,
-                metadata_only=metadata_only,
-                stats_file=stats_file,
-                stats_interval=stats_interval,
-                log_level=log_level,
-            )
-        )
-    if stats_file is not None:
-        raise typer.BadParameter("--stats-file needs --non-interactive")
+        rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
+        try:
+            client = FDSNDownloadManager.load(file)
+        except (OSError, ValueError) as e:
+            report = Report(status="invalid_config", error=str(e))
+        else:
+            with contextlib.suppress(Exception):  # kept in the report and the log file
+                asyncio.run(client.download(metadata_only=metadata_only))
+            report = client.report()
+        sys.stdout.write(report.model_dump_json(exclude_none=True) + "\n")
+        raise typer.Exit(EXIT_CODES[report.status])
 
     client = FDSNDownloadManager.load(file)
-
-    logging.root.setLevel(log_level)
 
     async def run_download() -> None:
         download = asyncio.create_task(client.download(metadata_only=metadata_only))
