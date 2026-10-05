@@ -6,7 +6,7 @@ import pytest
 from conftest import FakeFDSN
 from pydantic import TypeAdapter, ValidationError
 
-from fdsn_rush.client import FDSNClient
+from fdsn_rush.client import FDSNClient, StationQueryError
 from fdsn_rush.models.station import Stations
 from fdsn_rush.selection import (
     CAMPI_FLEGREI,
@@ -84,6 +84,13 @@ def test_defaults_contain_campi_flegrei() -> None:
         # servers answer `[...]` with 400
         (StationSelection, {"stations": ["XX.STA0[12]"]}),
         (GeographicSelection, {"networks": ["X[XY]"]}),
+        # network codes are explicit, so requests never overlap
+        (StationSelection, {"stations": ["X?.STA01"]}),
+        (StationSelection, {"stations": ["*.STA01"]}),
+        (StationSelection, {"stations": [".STA01"]}),
+        (GeographicSelection, {"networks": ["X?"]}),
+        (RadiusSelection, {"networks": ["*"]}),
+        (RadiusSelection, {"networks": [""]}),
     ],
 )
 def test_invalid_selection(model: type, data: dict[str, object]) -> None:
@@ -166,13 +173,13 @@ async def test_radius_selection(fake_fdsn: FakeFDSN) -> None:
 async def test_area_selection_networks(fake_fdsn: FakeFDSN, model: type) -> None:
     client = FDSNClient(url=fake_fdsn.url)
 
-    stations = await model(networks=["YY", "X?", "YY"]).get_available_stations(
+    stations = await model(networks=["YY", "XX", "YY"]).get_available_stations(
         client, *DAY
     )
 
     (request,) = fake_fdsn.station_requests
     assert request["selection"] == [
-        ["X?", *ALL_LINE[1:]],
+        ["XX", *ALL_LINE[1:]],
         ["YY", *ALL_LINE[1:]],
     ]
     assert stations.n_stations == 3
@@ -227,3 +234,86 @@ async def test_include_restricted(
     (request,) = fake_fdsn.station_requests
     # TRUE is the API default and not sent
     assert request["options"].get("includerestricted") == expected
+
+
+def test_options_never_scientific() -> None:
+    selection = RadiusSelection(latitude=0.00001, longitude=-0.0, maxradius=1e-05)
+
+    ((_, options, _),) = selection._requests()
+
+    assert options["latitude"] == "0.00001"
+    assert options["longitude"] == "0"
+    assert options["maxradius"] == "0.00001"
+
+
+async def test_station_selection_deduplicates(fake_fdsn: FakeFDSN) -> None:
+    """Overlapping lines in one request must not duplicate stations."""
+    client = FDSNClient(url=fake_fdsn.url)
+    selection = StationSelection(stations=["XX.STA0*", "XX.STA01", "XX"])
+
+    stations = await selection.get_available_stations(client, *DAY)
+
+    assert _station_codes(stations) == ["STA01", "STA02", "STA03"]
+
+
+@pytest.mark.parametrize("status", [404, 204])
+async def test_no_stations_is_no_error(fake_fdsn: FakeFDSN, status: int) -> None:
+    fake_fdsn.station_errors = {"XX": [status]}
+    client = FDSNClient(url=fake_fdsn.url)
+
+    stations = await StationSelection(stations=["XX"]).get_available_stations(
+        client, *DAY
+    )
+
+    assert stations.n_stations == 0
+    assert len(fake_fdsn.station_requests) == 1
+
+
+@pytest.mark.parametrize("status", [429, 500, 503])
+async def test_transient_error_is_retried(fake_fdsn: FakeFDSN, status: int) -> None:
+    fake_fdsn.station_errors = {"XX": [status, status]}
+    client = FDSNClient(url=fake_fdsn.url)
+
+    stations = await StationSelection(stations=["XX"]).get_available_stations(
+        client, *DAY
+    )
+
+    assert stations.n_stations == 3
+    assert len(fake_fdsn.station_requests) == 3
+
+
+@pytest.mark.parametrize(
+    ("errors", "n_requests"),
+    [
+        ([503, 503, 503], 3),  # retried until the attempts run out
+        ([400], 1),  # client errors are not retried
+        ([401], 1),
+    ],
+)
+async def test_failed_query_raises_with_other_stations(
+    fake_fdsn: FakeFDSN, errors: list[int], n_requests: int
+) -> None:
+    fake_fdsn.station_errors = {"XX": errors}
+    client = FDSNClient(url=fake_fdsn.url)
+    selection = StationSelection(stations=["XX", "YY", "ZZ.STA01"])
+
+    with pytest.raises(StationQueryError, match="network XX") as error:
+        await selection.get_available_stations(client, *DAY)
+
+    assert error.value.failed == ["network XX"]
+    xx_requests = [
+        r for r in fake_fdsn.station_requests if r["selection"][0][0] == "XX"
+    ]
+    assert len(xx_requests) == n_requests
+    # YY and ZZ were still queried
+    assert len(fake_fdsn.station_requests) == n_requests + 2
+
+
+async def test_unreachable_server_raises() -> None:
+    client = FDSNClient(url="http://127.0.0.1:1", timeout=1.0)
+
+    with pytest.raises(StationQueryError) as error:
+        await StationSelection(stations=["XX"]).get_available_stations(client, *DAY)
+
+    assert error.value.failed == ["network XX"]
+    assert error.value.stations.n_stations == 0

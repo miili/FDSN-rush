@@ -32,11 +32,11 @@ Stations are written as `NET.STA.LOC` codes, following the SEED convention. Part
 | `"GE.APE"`  | station `APE` of network `GE`, all locations  |
 | `"GE.APE.00"` | location `00` of `GE.APE`                   |
 | `"GE.A*"`   | all `GE` stations whose code starts with `A`  |
-| `"*.STU"`   | station `STU` in any network                  |
+| `"GE..00"`  | location `00` of every `GE` station           |
 
-Codes can contain the wildcards `*` (anything) and `?` (one character). FDSN servers reject `[...]`, so it is refused when the configuration is loaded.
+The network code is always required and explicit: `"*.STU"` or `".STU"` are refused. Station and location codes can contain the wildcards `*` (anything) and `?` (one character). FDSN servers reject `[...]`, so it is refused when the configuration is loaded.
 
-FDSN Rush sends one station query per network. A network that the server does not know is logged as a warning and does not affect the others.
+FDSN Rush sends one station query per network. A network that the server does not know (404) is logged as a warning and does not affect the others. A station that several entries match is downloaded once.
 
 ### In a bounding box
 
@@ -51,7 +51,7 @@ FDSN Rush sends one station query per network. A network that the server does no
 }
 ```
 
-Selects every station inside the box, bounds included. `networks` limits the box to some networks and may contain `*` and `?`. Leave it empty (the default) to get all networks.
+Selects every station inside the box, bounds included. `networks` limits the box to some networks, as explicit codes without wildcards. Leave it empty (the default) to get all networks.
 
 ### Within a radius
 
@@ -79,7 +79,11 @@ Every selection takes `exclude_stations`, in the same `NET.STA.LOC` syntax:
 }
 ```
 
-Excluded stations are removed after the server has answered, so `[...]` works here too (`"IV.CA[AB]*"`).
+Excluded stations are removed after the server has answered. Here, empty parts match anything in every position (`".CPOZ"`, `"IV..01"`), `--` is the blank location, and `[...]` works too (`"IV.CA[AB]*"`).
+
+### When the server fails
+
+A station query that fails with a server error (5xx), `429 Too Many Requests`, a timeout or a lost connection is retried twice, after 1 s and 2 s. Other errors, such as `400 Bad Request` or `401 Unauthorized`, are not retried. A failed query is logged and counted as `failed_queries`. The stations of the other queries are still downloaded, and the run ends as `partial`. If the failures leave no station, the run stops with an `error`. See [Scripting and automation](scripting.md).
 
 ### Restricted stations
 

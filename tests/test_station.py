@@ -104,3 +104,13 @@ def test_stations_remove(
     assert [s.nsl.station for s in stations.remove(selector)] == removed
     assert [s.nsl.station for s in stations] == kept
     assert selector not in stations
+
+
+def test_stations_extend_skips_known(stations: Stations) -> None:
+    sta01 = parse_stations(STATION_TEXT)
+    sta01.stations = sta01.stations[:1]
+
+    stations.extend(sta01)
+    stations.extend(parse_stations(STATION_TEXT))
+
+    assert [s.nsl.station for s in stations] == ["STA01", "STA02", "STA03"]

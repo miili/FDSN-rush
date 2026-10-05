@@ -173,7 +173,7 @@ Nothing is downloaded twice. Extend the time range, or use `"today"` as the end,
 
 ## Next steps
 
-- [Select stations and channels](guides/selecting-data.md): wildcards, blacklists and channel priorities.
+- [Select stations and channels](guides/selecting-data.md): by code, area or radius, exclusions and channel priorities.
 - [Restricted data with EIDA tokens](guides/restricted-data.md): download embargoed data.
 - [Configuration reference](reference/configuration.md): every option explained.
 

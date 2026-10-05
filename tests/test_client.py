@@ -4,13 +4,13 @@ from datetime import date
 
 from conftest import FakeFDSN
 
-from fdsn_rush.client import FDSNClient, _fdsn_time
+from fdsn_rush.client import FDSNClient
 from fdsn_rush.selection import StationSelection
-from fdsn_rush.utils import NSL
+from fdsn_rush.utils import NSL, fdsn_time
 
 
-def test_fdsn_time() -> None:
-    assert _fdsn_time(date(2024, 1, 1)) == "2024-01-01T00:00:00"
+def testfdsn_time() -> None:
+    assert fdsn_time(date(2024, 1, 1)) == "2024-01-01T00:00:00"
 
 
 async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:

@@ -29,9 +29,7 @@ You can leave out any option, and it takes its default. The smallest useful conf
 
 The file is validated strictly when it is loaded. Malformed values are reported with the name of the option before any request is made. Relative paths are resolved against the directory you run `fdsn-rush` from.
 
-!!! warning "Check the spelling of options"
-
-    Unknown options are ignored. A misspelled option such as `station_selecton` therefore leaves the real option at its default.
+Unknown options are an error, so a misspelled option such as `station_selecton` stops the run instead of being ignored. Run [`fdsn-rush check`](cli.md#check) to find them.
 
 ## Top level
 
@@ -117,7 +115,7 @@ The defaults of the bounding box and the radius cover the Campi Flegrei caldera,
 `stations`
 :   **List of station codes** · default `["2D.."]` · `StationSelection` only
 
-    Stations to download, as `NET.STA.LOC` codes. Empty parts match anything, and codes may contain the wildcards `*` and `?`. At least one entry is required. See [Selecting stations and channels](../guides/selecting-data.md#stations).
+    Stations to download, as `NET.STA.LOC` codes. The network code is required and explicit. Station and location codes may be left empty to match anything, or contain the wildcards `*` and `?`. At least one entry is required. See [Selecting stations and channels](../guides/selecting-data.md#stations).
 
 `minlatitude`, `maxlatitude`
 :   **Number (degrees)** · default `40.68`, `40.98` · `GeographicSelection` only
@@ -142,12 +140,12 @@ The defaults of the bounding box and the radius cover the Campi Flegrei caldera,
 `networks`
 :   **List of network codes** · default `[]` (all networks) · `GeographicSelection` and `RadiusSelection`
 
-    Limits the area to these networks. Codes may contain the wildcards `*` and `?`.
+    Limits the area to these networks. Codes are explicit, without wildcards.
 
 `exclude_stations`
 :   **List of station codes** · default `[]`
 
-    Stations to drop from the selection, as `NET.STA.LOC` codes. They are matched locally, so the wildcards `*`, `?` and `[...]` all work.
+    Stations to drop from the selection, as `NET.STA.LOC` codes. They are matched locally: empty parts match anything, `--` is the blank location, and the wildcards `*`, `?` and `[...]` all work.
 
 `include_restricted`
 :   **Boolean** · default `true`

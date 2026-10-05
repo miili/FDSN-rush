@@ -20,6 +20,7 @@ to_download: 1
 files: 1
 no_data: 0
 failed: 0
+failed_queries: 0
 elapsed: 2.815s
 status: ok
 ```
@@ -35,6 +36,9 @@ Nothing else is printed. An invalid configuration file is the exception: it rais
 `no_data`, `failed`
 :   Day files the server answered with 404, and day files that failed otherwise (other HTTP errors, timeouts).
 
+`failed_queries`
+:   Station queries that failed after retries (HTTP errors other than 404 and 204, timeouts). Their stations are missing from the plan. See [When the server fails](selecting-data.md#when-the-server-fails).
+
 `error`
 :   Only present when the run stopped: `<ExceptionName>: <message>`.
 
@@ -43,8 +47,8 @@ Nothing else is printed. An invalid configuration file is the exception: it rais
 | Code | `status`  | Meaning                                                                  |
 | ---- | --------- | ------------------------------------------------------------------------ |
 | `0`  | `ok`      | Finished. Day files the server has no data for (404) are not failures.   |
-| `1`  | `error`   | The run stopped, for example because a server was unreachable.           |
-| `2`  | `partial` | Finished, but `failed` is not `0`.                                       |
+| `1`  | `error`   | The run stopped, for example because no server answered a station query. |
+| `2`  | `partial` | Finished, but `failed` or `failed_queries` is not `0`.                   |
 
 Run again after a `1` or `2`: only the missing day files are requested. See [Resuming and updating archives](resuming.md).
 
@@ -57,5 +61,5 @@ Run again after a `1` or `2`: only the missing day files are requested. See [Res
 :   Statistics as compact JSON, rewritten at the start, whenever a day file is finished and at the end. Poll it for progress. It is replaced atomically, so it never holds a half-written document.
 
 ```json
-{"manager":{"start_time":"2024-01-03T10:00:01Z","end_time":"2024-01-03T10:00:05Z","elapsed_seconds":4.4},"writer":{"total_files_saved":1,"total_bytes_written":1900544,"archive_size":1900544},"clients":[{"n_requests":1,"n_bytes_downloaded":1463296,"n_chunks_total":1,"n_completed":1,"n_no_data":0,"n_failed":0,"n_stations":1,"url":"https://geofon.gfz.de/","n_stations_completed":1}]}
+{"manager":{"start_time":"2024-01-03T10:00:01Z","end_time":"2024-01-03T10:00:05Z","elapsed_seconds":4.4},"writer":{"total_files_saved":1,"total_bytes_written":1900544,"archive_size":1900544},"clients":[{"n_requests":1,"n_bytes_downloaded":1463296,"n_chunks_total":1,"n_completed":1,"n_no_data":0,"n_failed":0,"n_station_queries_failed":0,"n_stations":1,"url":"https://geofon.gfz.de/","n_stations_completed":1}]}
 ```

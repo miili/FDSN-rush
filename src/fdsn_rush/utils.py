@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
-from datetime import UTC, date, datetime, timedelta
+from collections.abc import Iterable
+from datetime import UTC, date, datetime, time, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Annotated, NamedTuple
@@ -112,7 +113,8 @@ class NSL(NamedTuple):
     def match(self, other: NSL) -> bool:
         """Check if another NSL object matches this one as a selector.
 
-        Empty codes act as wildcards, codes may contain fnmatch patterns.
+        Each code is compared on its own: an empty code is a wildcard, `--` is
+        the blank location, and codes may contain fnmatch patterns.
 
         Args:
             other (NSL): The NSL object to compare with.
@@ -121,17 +123,17 @@ class NSL(NamedTuple):
             bool: True if the objects match, False otherwise.
 
         """
-        if self.location:
-            return (
-                fnmatch(other.network, self.network)
-                and fnmatch(other.station, self.station)
-                and fnmatch(other.location, self.location)
+        location = "" if self.location == "--" else self.location
+        if self.location == "--" and other.location:
+            return False
+        return all(
+            not pattern or fnmatch(code, pattern)
+            for code, pattern in (
+                (other.network, self.network),
+                (other.station, self.station),
+                (other.location, location),
             )
-        if self.station:
-            return fnmatch(other.network, self.network) and fnmatch(
-                other.station, self.station
-            )
-        return fnmatch(other.network, self.network)
+        )
 
     @classmethod
     def parse(cls, nsl: str | NSL | list[str] | tuple[str, str, str]) -> NSL:
@@ -204,6 +206,42 @@ type NSLType = Annotated[
     AfterValidator(NSL._check),
     PlainSerializer(NSL._pretty_str),
 ]
+
+
+def fdsn_time(day: date) -> str:
+    """Format a date as the FDSN time string for midnight UTC, e.g. 2024-01-01T00:00:00."""
+    return datetime.combine(day, time(), tzinfo=UTC).strftime("%Y-%m-%dT%H:%M:%S")
+
+
+def fdsn_float(value: float) -> str:
+    """Format a number for an FDSN query, never in scientific notation.
+
+    Six decimals resolve 0.1 m in degrees, e.g. 1e-05 becomes ``0.00001``.
+    """
+    text = f"{value:.6f}".rstrip("0").rstrip(".")
+    return "0" if text == "-0" else text
+
+
+def fdsn_post_body(
+    options: dict[str, str],
+    selection: Iterable[NSL],
+    starttime: date,
+    endtime: date,
+) -> str:
+    """Build the body of a station POST request.
+
+    Options are ``key=value`` lines followed by one ``NET STA LOC CHA START END``
+    line per selection. An empty selector part is a wildcard, so it becomes ``*``.
+    A list of lines, unlike comma-joined GET parameters, does not turn
+    ``A.1`` + ``B.2`` into the cross product ``A,B`` x ``1,2``.
+    """
+    start, end = fdsn_time(starttime), fdsn_time(endtime)
+    lines = [f"{key}={value}" for key, value in options.items()]
+    lines.extend(
+        f"{nsl.network or '*'} {nsl.station or '*'} {nsl.location or '*'} * {start} {end}"
+        for nsl in sorted(set(selection))
+    )
+    return "\n".join(lines) + "\n"
 
 
 class NSLC(NamedTuple):

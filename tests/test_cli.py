@@ -42,13 +42,13 @@ def _report(stdout: str) -> dict[str, str]:
     return dict(line.split(": ", 1) for line in stdout.splitlines())
 
 
-def _config(tmp_path: Path, url: str, selection: str = "XX.STA01") -> Path:
+def _config(tmp_path: Path, url: str, *selection: str) -> Path:
     manager = FDSNDownloadManager(
         writer=SDSWriter(sds_archive=tmp_path / "sds"),
         clients=[FDSNClient(url=HttpUrl(url), rate_limit=1000)],
         metadata_path=tmp_path / "metadata",
         time_range=(date(2024, 1, 1), date(2024, 1, 2)),  # end is exclusive: one day
-        station_selection=StationSelection(stations=[selection]),
+        station_selection=StationSelection(stations=list(selection or ["XX.STA01"])),
         channel_priority=["HH[ZNE]", "EH[ZNE]"],
         min_channels_per_station=1,
     )
@@ -113,7 +113,7 @@ async def test_non_interactive_reports_no_data(
     tmp_path: Path, fake_fdsn: FakeFDSN
 ) -> None:
     """404 is not a failure, it is counted and the run still succeeds."""
-    config = _config(tmp_path, fake_fdsn.url, selection="XX.STA02")
+    config = _config(tmp_path, fake_fdsn.url, "XX.STA02")
 
     result = await asyncio.to_thread(
         runner.invoke,
@@ -194,7 +194,44 @@ async def test_server_error_counts_as_failed(
     report = _report(result.stdout)
     assert report["files"] == "2"
     assert report["failed"] == "1"
+    assert report["failed_queries"] == "0"
     assert report["status"] == "partial"
+
+
+async def test_failed_station_query_is_partial(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    """The other networks are downloaded, but the run is not `ok`."""
+    fake_fdsn.station_errors = {"YY": [401]}
+    config = _config(tmp_path, fake_fdsn.url, "XX.STA01", "YY")
+
+    result = await asyncio.to_thread(
+        runner.invoke, app, ["download", str(config), "-n"]
+    )
+
+    assert result.exit_code == 2
+    report = _report(result.stdout)
+    assert report["files"] == "3"
+    assert report["failed"] == "0"
+    assert report["failed_queries"] == "1"
+    assert report["status"] == "partial"
+
+
+async def test_all_station_queries_failed_is_error(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    fake_fdsn.station_errors = {"XX": [500, 500, 500]}
+    config = _config(tmp_path, fake_fdsn.url)
+
+    result = await asyncio.to_thread(
+        runner.invoke, app, ["download", str(config), "-n"]
+    )
+
+    assert result.exit_code == 1
+    report = _report(result.stdout)
+    assert report["error"].startswith("StationQueryError: 1 station queries")
+    assert report["failed_queries"] == "1"
+    assert report["status"] == "error"
 
 
 async def test_worker_error_is_unwrapped(
@@ -236,6 +273,27 @@ def test_check_invalid_config(tmp_path: Path) -> None:
 
     assert result.exit_code == 1
     assert isinstance(result.exception, ValidationError)
+
+
+@pytest.mark.parametrize(
+    "config",
+    [
+        {"station_blacklist": ["GE.APE"]},  # removed option
+        {"station_selecton": {"selection": "StationSelection"}},  # misspelled
+        {"station_selection": {"selection": "StationSelection", "networks": ["GE"]}},
+        {"writer": {"sds_archiv": "data"}},
+        {"clients": [{"urll": "https://geofon.gfz.de"}]},
+    ],
+)
+def test_check_unknown_option(tmp_path: Path, config: dict[str, object]) -> None:
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps(config))
+
+    result = runner.invoke(app, ["check", str(path)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValidationError)
+    assert "Extra inputs are not permitted" in str(result.exception)
 
 
 async def test_download_interactive_exit_code(

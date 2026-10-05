@@ -12,6 +12,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from pyrocko import io, trace
 
+from fdsn_rush import selection
 from fdsn_rush.models.station import Stations, parse_stations
 
 STATION_HEADER = (
@@ -51,6 +52,11 @@ MISSING_NSLC = {("XX", "STA02", "", "EHE")}
 MSeedFactory = Callable[..., bytes]
 
 
+@pytest.fixture(autouse=True)
+def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(selection, "RETRY_DELAY", 0.0)
+
+
 @pytest.fixture
 def stations() -> Stations:
     return parse_stations(STATION_TEXT)
@@ -87,6 +93,8 @@ class FakeFDSN:
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
         self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
+        # Status codes to answer station queries for a network with, one per query
+        self.station_errors: dict[str, list[int]] = {}
 
     @property
     def url(self) -> str:
@@ -120,6 +128,12 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
                     raise web.HTTPBadRequest(text=f"Error 400: bad line {line!r}")
                 selection.append(fields)
         fake.station_requests.append({"options": options, "selection": selection})
+        errors = fake.station_errors.get(selection[0][0] if selection else "")
+        if errors:
+            status = errors.pop(0)
+            if status == 204:
+                return web.Response(status=204)
+            return web.Response(status=status, text=f"Error {status}")
         # Geographic options are ignored, all stations are at 52.0, 13.0
         lines = [
             line

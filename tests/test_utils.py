@@ -14,6 +14,7 @@ from fdsn_rush.utils import (
     FilePath,
     NSLType,
     date_today,
+    fdsn_float,
     human_readable_bytes,
     wait_for_path,
 )
@@ -59,6 +60,16 @@ def test_nsl_serialize() -> None:
         (NSL("XX", "STA02", ""), NSL("XX", "STA01", "00"), False),
         (NSL("XX", "STA*", ""), NSL("XX", "STA01", "00"), True),
         (NSL("XX", "STA01", "10"), NSL("XX", "STA01", "00"), False),
+        # empty codes are wildcards wherever they are
+        (NSL("", "STA01", ""), NSL("XX", "STA01", "00"), True),
+        (NSL("", "STA01", ""), NSL("XX", "STA02", "00"), False),
+        (NSL("XX", "", "00"), NSL("XX", "STA01", "00"), True),
+        (NSL("XX", "", "00"), NSL("XX", "STA01", "10"), False),
+        (NSL("", "", ""), NSL("XX", "STA01", "00"), True),
+        # "--" is the blank location, not a wildcard
+        (NSL("XX", "STA01", "--"), NSL("XX", "STA01", ""), True),
+        (NSL("XX", "STA01", "--"), NSL("XX", "STA01", "00"), False),
+        (NSL("XX", "STA01", ""), NSL("XX", "STA01", ""), True),
     ],
 )
 def test_nsl_match(selector: NSL, nsl: NSL, expected: bool) -> None:
@@ -122,3 +133,20 @@ def test_report(
     monkeypatch.setattr(utils, "NON_INTERACTIVE", True)
     utils.report("error", "line one\n  line two")
     assert capsys.readouterr().out == "error: line one line two\n"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        (40.827, "40.827"),
+        (40.0, "40"),
+        (0.15, "0.15"),
+        (1e-05, "0.00001"),
+        (1e-07, "0"),
+        (-0.0, "0"),
+        (-13.94, "-13.94"),
+        (1e20, "100000000000000000000"),
+    ],
+)
+def test_fdsn_float(value: float, expected: str) -> None:
+    assert fdsn_float(value) == expected

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Iterator
 from datetime import date
@@ -9,14 +10,14 @@ from typing import TYPE_CHECKING, Annotated, Literal, Self
 import aiohttp
 from pydantic import (
     AfterValidator,
-    BaseModel,
     Field,
     model_validator,
 )
 
-from fdsn_rush.client import HEADERS, _post_body, get_error_str
+from fdsn_rush.base import Model
+from fdsn_rush.client import HEADERS, StationQueryError, get_error_str
 from fdsn_rush.models.station import Stations, parse_stations
-from fdsn_rush.utils import NSL, NSLType
+from fdsn_rush.utils import NSL, NSLType, fdsn_float, fdsn_post_body
 
 if TYPE_CHECKING:
     from fdsn_rush.client import FDSNClient
@@ -28,18 +29,40 @@ logger = logging.getLogger(__name__)
 CAMPI_FLEGREI = (40.827, 14.139)
 
 STATION_OPTIONS = {"level": "channel", "format": "text", "nodata": "404"}
-# A selection line with every part as wildcard, see `_post_body`
+# A selection line with every part as wildcard, see `fdsn_post_body`
 ALL_STATIONS = NSL("", "", "")
+STATION_QUERY = "/fdsnws/station/1/query"
+
+# Station queries that fail with these are retried, with the delay doubling
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1.0
+RETRY_STATUS = {429, 500, 502, 503, 504}
+TRANSIENT_ERRORS = (
+    aiohttp.ClientConnectionError,
+    aiohttp.ClientPayloadError,
+    TimeoutError,
+)
 
 
 def _check_server_pattern(nsl: NSL) -> NSL:
-    """FDSN servers only support the wildcards `*` and `?`, not `[...]`."""
+    """FDSN servers only support the wildcards `*` and `?`, not `[...]`.
+
+    Network codes are explicit, so the requests per network never overlap.
+    """
+    if not nsl.network or _has_wildcard(nsl.network):
+        raise ValueError(
+            f"invalid selection {nsl.pretty}, the network code must be explicit"
+        )
     if any("[" in code for code in nsl):
         raise ValueError(
             f"invalid selection {nsl.pretty}, FDSN servers only support"
             " the wildcards `*` and `?`"
         )
     return nsl
+
+
+def _has_wildcard(code: str) -> bool:
+    return any(char in code for char in "*?[")
 
 
 def _check_network(network: str) -> str:
@@ -58,7 +81,7 @@ def _network_lines(networks: set[str]) -> list[NSL]:
     return [NSL(network, "", "") for network in sorted(networks)]
 
 
-class Selection(BaseModel):
+class Selection(Model):
     selection: Literal["Selection"] = "Selection"
 
     exclude_stations: set[NSLType] = Field(
@@ -72,16 +95,12 @@ class Selection(BaseModel):
         description="Include restricted stations, which need an EIDA token to download",
     )
 
-    @classmethod
-    def _get_subclasses(cls) -> tuple[type[Selection], ...]:
-        return tuple(cls.__subclasses__())
-
     def _options(self, **options: float) -> dict[str, str]:
         """Return the station query options, extended by `options`."""
         query = dict(STATION_OPTIONS)
         if not self.include_restricted:
             query["includerestricted"] = "FALSE"
-        query.update({key: str(value) for key, value in options.items()})
+        query.update({key: fdsn_float(value) for key, value in options.items()})
         return query
 
     def _requests(self) -> Iterator[tuple[str, dict[str, str], list[NSL]]]:
@@ -96,6 +115,10 @@ class Selection(BaseModel):
     ) -> Stations:
         """Fetch the stations of the selection from the FDSN service.
 
+        A 404 or 204 answer means the server has no stations for a request.
+        Other errors are retried if they are transient, and fail the request
+        otherwise. The remaining requests are still made.
+
         Args:
             client: The FDSN client to use for the requests.
             starttime: The start time of the selection.
@@ -103,9 +126,14 @@ class Selection(BaseModel):
 
         Returns:
             Stations: The available stations.
+
+        Raises:
+            StationQueryError: If any request failed. It holds the stations of
+                the other requests.
         """
         logger.info("Preparing FDSN stations: %s", client.url)
         stations = Stations()
+        failed: list[str] = []
 
         async with aiohttp.ClientSession(
             base_url=str(client.url),
@@ -113,29 +141,20 @@ class Selection(BaseModel):
             headers=HEADERS,
         ) as session:
             for label, options, nsls in self._requests():
-                body = _post_body(options, nsls, starttime, endtime)
-                async with session.post(
-                    "/fdsnws/station/1/query", data=body
-                ) as response:
-                    logger.debug("Fetching available stations from %s", response.url)
-                    if response.status == 404:
-                        logger.warning("No stations found for %s", label)
-                        continue
-                    try:
-                        response.raise_for_status()
-                    except aiohttp.ClientResponseError as e:
-                        logger.error(
-                            "Failed to fetch stations for %s from %s: %d %s (%s)",
-                            label,
-                            client.url,
-                            e.status,
-                            get_error_str(e.status),
-                            e.message,
-                        )
-                        continue
-                    data = await response.text()
+                body = fdsn_post_body(options, nsls, starttime, endtime)
+                try:
+                    data = await _query(session, label, body)
+                except StationQueryError as e:
+                    logger.error(
+                        "Failed to fetch stations for %s from %s: %s",
+                        label,
+                        client.url,
+                        e,
+                    )
+                    failed.append(label)
+                    continue
 
-                if response.status == 204 or not data.strip():
+                if not data.strip():
                     logger.warning("No stations found for %s", label)
                     continue
                 try:
@@ -152,7 +171,48 @@ class Selection(BaseModel):
             for station in stations.remove(exclude):
                 logger.info("Excluding station %s", station.nsl.pretty)
 
+        if failed:
+            raise StationQueryError(
+                f"{len(failed)} station queries to {client.url} failed: "
+                + "; ".join(failed),
+                failed=failed,
+                stations=stations,
+            )
         return stations
+
+
+async def _query(session: aiohttp.ClientSession, label: str, body: str) -> str:
+    """POST one station query and return the text, empty if there are no stations.
+
+    Raises:
+        StationQueryError: If the query failed, after retrying transient errors.
+    """
+    error = ""
+    for attempt in range(RETRY_ATTEMPTS):
+        try:
+            async with session.post(STATION_QUERY, data=body) as response:
+                logger.debug("Fetching available stations from %s", response.url)
+                if response.status in (204, 404):
+                    return ""
+                if response.status not in RETRY_STATUS:
+                    response.raise_for_status()
+                    return await response.text()
+                error = f"{response.status} {get_error_str(response.status)}"
+        except aiohttp.ClientResponseError as e:
+            raise StationQueryError(f"{e.status} {get_error_str(e.status)}") from e
+        except TRANSIENT_ERRORS as e:
+            error = f"{type(e).__name__}: {e}"
+
+        if attempt + 1 < RETRY_ATTEMPTS:
+            delay = RETRY_DELAY * 2**attempt
+            logger.warning(
+                "Station query for %s failed (%s), retrying in %.0f s",
+                label,
+                error,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    raise StationQueryError(error)
 
 
 class StationSelection(Selection):
@@ -276,7 +336,7 @@ class RadiusSelection(Selection):
             maxradius=self.maxradius,
         )
         if self.minradius:
-            options["minradius"] = str(self.minradius)
+            options["minradius"] = fdsn_float(self.minradius)
         label = (
             f"radius {self.minradius}..{self.maxradius} deg "
             f"around {self.latitude}, {self.longitude}"

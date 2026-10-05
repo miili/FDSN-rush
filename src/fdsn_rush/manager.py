@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_validator
 from rich.progress import track
 
-from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
+from fdsn_rush.base import Model
+from fdsn_rush.client import (
+    DownloadDayfile,
+    FDSNClient,
+    FDSNClientStats,
+    StationQueryError,
+)
 from fdsn_rush.selection import SelectionType, StationSelection
 from fdsn_rush.stats import Stats
 from fdsn_rush.utils import Date, date_today, datetime_now, report
@@ -65,7 +71,7 @@ class FDSNDownloadManagerStats(Stats):
         table.add_row("Time elapsed", elapsed_time)
 
 
-class FDSNDownloadManager(BaseModel):
+class FDSNDownloadManager(Model):
     writer: SDSWriter = Field(
         default_factory=SDSWriter,
         description="Writer for storing downloaded SDS data",
@@ -130,12 +136,20 @@ class FDSNDownloadManager(BaseModel):
 
     async def prepare(self):
         """Prepare the download manager by initializing the writer and clients."""
+        errors: list[StationQueryError] = []
         for client in self.clients:
-            await client.prepare(
-                self.station_selection,
-                self.time_range[0],
-                self.time_range[1],
-            )
+            try:
+                await client.prepare(
+                    self.station_selection,
+                    self.time_range[0],
+                    self.time_range[1],
+                )
+            except StationQueryError as e:
+                # One unreachable server must not stop the others
+                logger.error("%s", e)
+                errors.append(e)
+        if len(errors) == len(self.clients):
+            raise errors[0]
         await self.writer.prepare()
 
     def get_work(self, client: FDSNClient) -> list[DownloadDayfile]:

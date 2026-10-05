@@ -9,11 +9,12 @@ from datetime import timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import Field, PrivateAttr
 from pyrocko.io import load, save
 from pyrocko.trace import NoData, degapper
 from rich.progress import track
 
+from fdsn_rush.base import Model
 from fdsn_rush.client import DownloadDayfile
 from fdsn_rush.remote_log import RemoteLog
 from fdsn_rush.stats import Stats
@@ -89,7 +90,7 @@ class SDSWriterStats(Stats):
         )
 
 
-class SDSWriter(BaseModel):
+class SDSWriter(Model):
     sds_archive: Path = Field(
         default=Path("./data/"),
         description="Base path for storing SDS data",

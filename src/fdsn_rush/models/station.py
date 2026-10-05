@@ -206,8 +206,15 @@ class Stations(BaseModel):
         return any(selector.match(station.nsl) for station in self.stations)
 
     def extend(self, stations: Stations):
-        """Append stations to the list."""
-        self.stations.extend(stations.stations)
+        """Append stations to the list, skipping stations that are already in it.
+
+        Overlapping station queries return the same station more than once.
+        """
+        known = {station.nsl for station in self.stations}
+        for station in stations:
+            if station.nsl not in known:
+                known.add(station.nsl)
+                self.stations.append(station)
 
     def remove(self, selector: NSL) -> list[Station]:
         """Remove all stations matching the NSL selector.

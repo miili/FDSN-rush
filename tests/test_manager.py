@@ -8,7 +8,7 @@ import pytest
 from conftest import FakeFDSN
 from pydantic import HttpUrl, ValidationError
 
-from fdsn_rush.client import FDSNClient
+from fdsn_rush.client import FDSNClient, StationQueryError
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.models.station import Stations
 from fdsn_rush.selection import StationSelection
@@ -95,6 +95,27 @@ async def test_get_work_exclude_and_archive(
     assert not any("STA02" in w for w in work)
     assert "XX.STA01..HHZ/2024-01-01" not in work
     assert len(work) == 5
+
+
+async def test_prepare_skips_failed_client(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
+    """An unreachable server must not stop the clients of other servers."""
+    manager = _manager(tmp_path, fake_fdsn.url)
+    manager.clients.append(FDSNClient(url=HttpUrl("http://127.0.0.1:1"), timeout=1.0))
+
+    await manager.prepare()
+
+    working, unreachable = manager.clients
+    assert working.available_stations.n_stations == 3
+    assert unreachable.available_stations.n_stations == 0
+    assert unreachable._stats.n_station_queries_failed == 1
+    assert manager.get_work(unreachable) == []
+
+
+async def test_prepare_raises_if_all_clients_fail(tmp_path: Path) -> None:
+    manager = _manager(tmp_path, "http://127.0.0.1:1")
+
+    with pytest.raises(StationQueryError):
+        await manager.prepare()
 
 
 async def test_download(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
