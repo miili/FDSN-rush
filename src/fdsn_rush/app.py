@@ -95,12 +95,11 @@ def _download(file: Path, verbose: int, non_interactive: bool, metadata_only: bo
     logging.root.addHandler(log_file)
 
     async def run() -> None:
-        view = None if non_interactive else asyncio.create_task(live_view())
+        view = asyncio.create_task(live_view())  # silent when quiet
         try:
             await manager.download(metadata_only=metadata_only)
         finally:
-            if view:
-                view.cancel()
+            view.cancel()
 
     status = "ok"
     try:
