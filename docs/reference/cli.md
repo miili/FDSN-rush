@@ -36,7 +36,7 @@ Validate a configuration file.
 fdsn-rush check FILE
 ```
 
-It loads the file in strict mode, as `download` does, and prints `status: ok` with exit code `0`. For a missing or invalid file it prints `error: <message>` and `status: invalid_config` and exits with `2`. It contacts no server and writes nothing.
+It loads the file in strict mode, as `download` does, and prints `FILE is valid`. An invalid file raises the validation error and exits with `1`. Nothing is contacted or written.
 
 ## `metadata`
 

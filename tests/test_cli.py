@@ -10,8 +10,9 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import rich
 from conftest import FakeFDSN
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 from typer.testing import CliRunner
 
 from fdsn_rush import utils
@@ -29,6 +30,7 @@ def _restore_global_state() -> Iterator[None]:
     handlers = logging.root.handlers[:]
     yield
     utils.NON_INTERACTIVE = False
+    rich.reconfigure()  # undo quiet=True
     for handler in logging.root.handlers[len(handlers) :]:
         handler.close()
     logging.root.handlers = handlers
@@ -87,7 +89,6 @@ async def test_non_interactive_downloads_one_day(
 
     # stats file
     sds_stats = json.loads((sds / "fdsn-rush-stats.json").read_text())
-    assert report["stats_file"] == str(sds / "fdsn-rush-stats.json")
     assert sds_stats["writer"]["total_files_saved"] == 3
     assert sds_stats["writer"]["total_bytes_written"] > 0
     (client,) = sds_stats["clients"]
@@ -100,7 +101,6 @@ async def test_non_interactive_downloads_one_day(
     assert len(fake_fdsn.dataselect_requests) == 3
 
     # the log is in the archive
-    assert report["log_file"] == str(sds / "fdsn-rush.log")
     log = (sds / "fdsn-rush.log").read_text()
     assert "Starting download" in log
     assert "All downloads completed successfully." in log
@@ -125,16 +125,6 @@ async def test_non_interactive_reports_no_data(
     assert report["failed"] == "0"
 
 
-def test_non_interactive_invalid_config(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["download", str(tmp_path / "missing.json"), "-n"])
-
-    assert result.exit_code == 2
-    report = _report(result.stdout)
-    assert report["status"] == "invalid_config"
-    assert "missing.json" in report["error"]
-    assert "files" not in report
-
-
 def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     config = _config(tmp_path, "http://127.0.0.1:1")
 
@@ -144,7 +134,7 @@ def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     report = _report(result.stdout)
     assert report["status"] == "error"
     assert report["error"]
-    assert "Run failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
+    assert "Download failed" in (tmp_path / "sds" / "fdsn-rush.log").read_text()
 
 
 async def test_stats_file_is_updated_per_file(
@@ -182,7 +172,7 @@ async def test_partial_when_downloads_failed(
         runner.invoke, app, ["download", str(config), "-n"]
     )
 
-    assert result.exit_code == 3
+    assert result.exit_code == 2
     assert _report(result.stdout)["status"] == "partial"
 
 
@@ -205,18 +195,23 @@ async def test_metadata_downloads_no_waveforms(
 
 
 def test_check_valid_config(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["check", str(_config(tmp_path, "http://x.invalid"))])
+    config = _config(tmp_path, "http://x.invalid")
+
+    result = runner.invoke(app, ["check", str(config)])
 
     assert result.exit_code == 0
-    assert _report(result.stdout) == {"status": "ok"}
+    assert "is valid" in result.stdout
     assert not (tmp_path / "sds").exists()  # nothing is written
 
 
 def test_check_invalid_config(tmp_path: Path) -> None:
-    result = runner.invoke(app, ["check", str(tmp_path / "missing.json")])
+    config = tmp_path / "config.json"
+    config.write_text('{"time_range": 5}')
 
-    assert result.exit_code == 2
-    assert _report(result.stdout)["status"] == "invalid_config"
+    result = runner.invoke(app, ["check", str(config)])
+
+    assert result.exit_code == 1
+    assert isinstance(result.exception, ValidationError)
 
 
 async def test_download_interactive_exit_code(

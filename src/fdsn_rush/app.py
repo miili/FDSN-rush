@@ -2,9 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Coroutine
 from pathlib import Path
-from typing import Annotated, Any, NoReturn
+from typing import Annotated
 
 import rich
 import typer
@@ -13,7 +12,7 @@ from rich.logging import RichHandler
 
 from fdsn_rush import __version__, utils
 from fdsn_rush.convert import convert_sds
-from fdsn_rush.manager import LOG_FILE_NAME, STATS_FILE_NAME, FDSNDownloadManager
+from fdsn_rush.manager import LOG_FILE_NAME, FDSNDownloadManager
 from fdsn_rush.stats import live_view
 from fdsn_rush.utils import report
 
@@ -27,7 +26,7 @@ logging.basicConfig(
 
 logger = logging.getLogger(__name__)
 
-EXIT_CODES = {"ok": 0, "error": 1, "invalid_config": 2, "partial": 3}
+EXIT_CODES = {"ok": 0, "error": 1, "partial": 2}
 
 app = typer.Typer(
     name="fdsn-rush",
@@ -74,61 +73,40 @@ NonInteractive = Annotated[
         "-n",
         help=(
             "No live view and no console output except a few key: value lines "
-            "on stdout. Exit code: 0 ok, 1 error, 2 invalid config, 3 partial."
+            "on stdout. Exit code: 0 ok, 1 error, 2 partial."
         ),
     ),
 ]
 
 
-def _start(
-    file: Path, verbose: int, non_interactive: bool, *, log: bool = True
-) -> FDSNDownloadManager:
-    """Load the config and set up output. Exits with code 2 if it is invalid."""
-    logging.root.setLevel(logging.DEBUG if verbose >= 1 else logging.INFO)
+def _download(file: Path, verbose: int, non_interactive: bool, metadata_only: bool):
+    manager = FDSNDownloadManager.load(file)
+    logging.root.setLevel(logging.DEBUG if verbose else logging.INFO)
     if non_interactive:
         utils.NON_INTERACTIVE = True
         rich.reconfigure(quiet=True)  # live view, progress bars and Rich log lines
 
-    try:
-        manager = FDSNDownloadManager.load(file)
-    except (OSError, ValueError) as e:
-        if not non_interactive:
-            raise
-        report("error", e)
-        report("status", "invalid_config")
-        raise typer.Exit(EXIT_CODES["invalid_config"]) from e
+    archive = manager.writer.sds_archive
+    archive.mkdir(parents=True, exist_ok=True)
+    log_file = logging.FileHandler(archive / LOG_FILE_NAME)
+    log_file.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
+    )
+    logging.root.addHandler(log_file)
 
-    if log:
-        archive = manager.writer.sds_archive
-        archive.mkdir(parents=True, exist_ok=True)
-        log_file = logging.FileHandler(archive / LOG_FILE_NAME)
-        log_file.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
-        )
-        logging.root.addHandler(log_file)
-        report("log_file", archive / LOG_FILE_NAME)
-        report("stats_file", archive / STATS_FILE_NAME)
-    return manager
-
-
-def _run(
-    manager: FDSNDownloadManager, job: Coroutine[Any, Any, None], *, summary: bool
-) -> NoReturn:
-    """Run `job` with the live view, report the outcome and exit with its code."""
-
-    async def main() -> None:
-        view = None if utils.NON_INTERACTIVE else asyncio.create_task(live_view())
+    async def run() -> None:
+        view = None if non_interactive else asyncio.create_task(live_view())
         try:
-            await job
+            await manager.download(metadata_only=metadata_only)
         finally:
             if view:
                 view.cancel()
 
     status = "ok"
     try:
-        asyncio.run(main())
+        asyncio.run(run())
     except Exception as e:
-        logger.exception("Run failed")
+        logger.exception("Download failed")
         # TaskGroup wraps worker errors in an ExceptionGroup
         leaf = e.exceptions[0] if isinstance(e, BaseExceptionGroup) else e
         report("error", f"{type(leaf).__name__}: {leaf}")
@@ -136,11 +114,10 @@ def _run(
 
     stats = manager.stats_report()
     n_failed = sum(c.n_failed for c in stats.clients)
-    if summary:
-        report("files", stats.writer.total_files_saved)
-        report("no_data", sum(c.n_no_data for c in stats.clients))
-        report("failed", n_failed)
-        report("elapsed", f"{stats.manager.elapsed_seconds}s")
+    report("files", stats.writer.total_files_saved)
+    report("no_data", sum(c.n_no_data for c in stats.clients))
+    report("failed", n_failed)
+    report("elapsed", f"{stats.manager.elapsed_seconds}s")
     if status == "ok" and n_failed:
         status = "partial"
     report("status", status)
@@ -152,8 +129,7 @@ def download(
     file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
 ) -> None:
     """Download data from FDSN to local SDS archive."""
-    manager = _start(file, verbose, non_interactive)
-    _run(manager, manager.download(), summary=True)
+    _download(file, verbose, non_interactive, metadata_only=False)
 
 
 @app.command()
@@ -161,15 +137,14 @@ def metadata(
     file: ConfigFile, verbose: Verbose = 0, non_interactive: NonInteractive = False
 ) -> None:
     """Download only the station inventory and StationXML, no waveforms."""
-    manager = _start(file, verbose, non_interactive)
-    _run(manager, manager.download(metadata_only=True), summary=False)
+    _download(file, verbose, non_interactive, metadata_only=True)
 
 
 @app.command()
 def check(file: ConfigFile) -> None:
     """Validate the configuration file."""
-    _start(file, 0, non_interactive=True, log=False)
-    report("status", "ok")
+    FDSNDownloadManager.load(file)
+    rich.print(f"{file} is valid")
 
 
 @app.command()

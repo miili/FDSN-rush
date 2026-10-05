@@ -209,7 +209,6 @@ class FDSNDownloadManager(BaseModel):
 
         logger.info("Found %d dayfiles to download", len(chunks_download))
         report("stations", n_stations)
-        report("dayfiles", len(chunks))
         report("in_archive", i_downloaded)
         report("to_download", len(chunks_download))
         return chunks_download
@@ -274,6 +273,7 @@ class FDSNDownloadManager(BaseModel):
 
     async def download_metadata(self):
         """Download metadata for the selected stations."""
+        report("metadata_folder", self.metadata_path)
         for client in self.clients:
             available_stations = []
             for station in client.available_stations:
@@ -284,7 +284,6 @@ class FDSNDownloadManager(BaseModel):
                 available_stations.append(station.nsl)
 
             self.metadata_path.mkdir(parents=True, exist_ok=True)
-            report("metadata_folder", self.metadata_path)
             for network, stations in groupby(
                 available_stations, key=lambda x: x.network
             ):

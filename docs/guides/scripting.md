@@ -4,73 +4,60 @@ icon: lucide/bot
 
 # Scripting and automation
 
-`--non-interactive` replaces the live view with output that a script, a scheduler or an AI agent can parse.
+`--non-interactive` (`-n`) replaces the live view with a few `key: value` lines on stdout that a script or an AI agent can parse. `download` and `metadata` accept it.
 
 ```sh
-fdsn-rush download config.json --non-interactive > report.json
-echo $?
+fdsn-rush download config.json -n
 ```
 
-## Output
-
-`download` and `metadata` accept `--non-interactive`, and [`check`](../reference/cli.md#check) always prints in this format. It switches off the live view, progress bars and log lines. The only thing printed is a few `key: value` lines on stdout, and stderr stays empty:
-
 ```text
-log_file: data/fdsn-rush.log
-stats_file: data/fdsn-rush-stats.json
 sds_folder: data
+metadata_folder: metadata
+stations: 1
+in_archive: 0
+to_download: 1
 downloading: https://geofon.gfz.de/
-files: 3
+files: 1
 no_data: 0
 failed: 0
-elapsed: 4.4s
+elapsed: 2.785s
 status: ok
 ```
 
-`sds_folder`
-:   The SDS archive the files are written to.
+Nothing else is printed, and stderr stays empty.
 
-`downloading`
-:   A server that is being downloaded from. One line per server.
-
-`stations`, `dayfiles`, `in_archive`, `to_download`
-:   The plan: matching stations, channel-days that pass the selection, those already in the archive, and those requested. They are printed once per server.
+`stations`, `in_archive`, `to_download`
+:   The plan per server: matching stations, day files already in the archive and day files requested.
 
 `files`
-:   Dayfiles saved in this run.
+:   Day files saved in this run.
 
-`no_data`
-:   Dayfiles the server answered with 404.
-
-`failed`
-:   Dayfiles that failed with another error (HTTP errors other than 404, timeouts).
+`no_data`, `failed`
+:   Day files the server answered with 404, and day files that failed otherwise (other HTTP errors, timeouts).
 
 `error`
-:   Only present when something went wrong: `<ExceptionName>: <message>`, or the validation message for `invalid_config`.
+:   Only present when the run stopped: `<ExceptionName>: <message>`.
 
-`status` is always the last line. The exit code follows it:
+`status` is always the last line and sets the exit code:
 
-| Code | `status`         | Meaning                                                                    |
-| ---- | ---------------- | -------------------------------------------------------------------------- |
-| `0`  | `ok`             | Finished. Dayfiles the server has no data for (404) are not failures.      |
-| `1`  | `error`          | The run stopped, for example because a server was unreachable.             |
-| `2`  | `invalid_config` | The configuration file is missing or invalid. Nothing is written to disk.  |
-| `3`  | `partial`        | Finished, but `failed` is not `0`.                                         |
+| Code | `status`  | Meaning                                                                  |
+| ---- | --------- | ------------------------------------------------------------------------ |
+| `0`  | `ok`      | Finished. Day files the server has no data for (404) are not failures.   |
+| `1`  | `error`   | The run stopped, for example because a server was unreachable.           |
+| `2`  | `partial` | Finished, but `failed` is not `0`.                                       |
 
-Run again after a `1` or `3`: the archive is resumed and only the missing dayfiles are requested. See [Resuming and updating archives](resuming.md).
+Run again after a `1` or `2`: only the missing day files are requested. See [Resuming and updating archives](resuming.md). Validate a configuration file first with [`check`](../reference/cli.md#check).
 
 ## Files in the archive
 
-Every `download` run, interactive or not, writes two files into the SDS archive:
+Every `download` and `metadata` run, interactive or not, writes two files into `sds_folder`:
 
-`<sds_archive>/fdsn-rush.log`
+`fdsn-rush.log`
 :   The log, appended to on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
 
-`<sds_archive>/fdsn-rush-stats.json`
-:   Statistics as compact JSON, rewritten at the start, whenever a file has been downloaded and at the end. Poll it for progress. It is replaced atomically, so it never holds a half-written document.
+`fdsn-rush-stats.json`
+:   Statistics as compact JSON, rewritten at the start, whenever a day file is finished and at the end. Poll it for progress. It is replaced atomically, so it never holds a half-written document.
 
 ```json
 {"manager":{"start_time":"2024-01-03T10:00:01Z","end_time":"2024-01-03T10:00:05Z","elapsed_seconds":4.4},"writer":{"total_files_saved":1,"total_bytes_written":1900544,"archive_size":1900544},"clients":[{"n_requests":1,"n_bytes_downloaded":1463296,"n_chunks_total":1,"n_completed":1,"n_no_data":0,"n_failed":0,"n_stations":1,"url":"https://geofon.gfz.de/","n_stations_completed":1}]}
 ```
-
-`n_chunks_total` and `n_completed` count the planned and finished dayfiles per server. Dayfiles already in the archive are not planned.
