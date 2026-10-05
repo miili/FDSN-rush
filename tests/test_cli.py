@@ -130,13 +130,18 @@ async def test_non_interactive_reports_no_data(
 def test_non_interactive_server_unreachable(tmp_path: Path) -> None:
     config = _config(tmp_path, "http://127.0.0.1:1")
 
+    config.with_suffix(".log").write_text("log of the previous run\n")
+
     result = runner.invoke(app, ["download", str(config), "-n"])
 
     assert result.exit_code == 1
     report = _report(result.stdout)
     assert report["status"] == "error"
     assert report["error"]
-    assert "Download failed" in config.with_suffix(".log").read_text()
+    log = config.with_suffix(".log").read_text()
+    assert "Download failed" in log
+    assert "previous run" not in log  # the log is replaced on every run
+    assert report["elapsed"] != "Nones"  # failed before the inventory was fetched
 
 
 async def test_stats_file_is_updated_per_file(

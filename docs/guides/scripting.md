@@ -51,7 +51,7 @@ Run again after a `1` or `2`: only the missing day files are requested. See [Res
 ## Log and stats file
 
 `<config>.log`
-:   The log of `download`, next to the configuration file (`config.json` → `config.log`), appended to on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
+:   The log of `download`, next to the configuration file (`config.json` → `config.log`), replaced on every run. `-v` adds debug output, including the request URLs. Read it for the details behind an `error` or a `partial` run.
 
 `<sds_folder>/fdsn-rush-stats.json`
 :   Statistics as compact JSON, rewritten at the start, whenever a day file is finished and at the end. Poll it for progress. It is replaced atomically, so it never holds a half-written document.

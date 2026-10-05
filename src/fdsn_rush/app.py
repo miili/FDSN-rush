@@ -89,7 +89,7 @@ def download(
     """
     manager = FDSNDownloadManager.load(file)
     logging.root.setLevel(logging.DEBUG if verbose else logging.INFO)
-    log_file = logging.FileHandler(file.with_suffix(".log"), encoding="utf-8")
+    log_file = logging.FileHandler(file.with_suffix(".log"), mode="w", encoding="utf-8")
     log_file.setFormatter(
         logging.Formatter("%(asctime)s %(levelname)-7s %(name)s: %(message)s")
     )

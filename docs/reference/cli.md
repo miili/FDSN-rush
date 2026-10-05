@@ -63,7 +63,7 @@ fdsn-rush download [OPTIONS] FILE
 `-n`, `--non-interactive`
 :   Run without console output except a few `key: value` lines on stdout, and exit with a status code. See [Scripting and automation](../guides/scripting.md).
 
-Every run appends its log to `<config>.log` next to the configuration file (`config.json` → `config.log`) and keeps `fdsn-rush-stats.json` in the SDS archive up to date.
+Every run writes its log to `<config>.log` next to the configuration file (`config.json` → `config.log`) and keeps `fdsn-rush-stats.json` in the SDS archive up to date.
 
 The command exits once all clients have finished. Running it again resumes or extends the archive. See [Resuming and updating archives](../guides/resuming.md).
 

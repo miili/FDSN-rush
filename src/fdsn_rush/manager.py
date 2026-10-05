@@ -142,8 +142,6 @@ class FDSNDownloadManager(BaseModel):
             )
         await self.writer.prepare()
 
-        self._stats.start_time = datetime_now()
-
     def get_available_stations(self) -> list[NSL]:
         """Get a list of available stations based on the selection and blacklist."""
         available_stations = []
@@ -243,6 +241,7 @@ class FDSNDownloadManager(BaseModel):
                 await self._file_done.wait()
                 self._file_done.clear()
 
+        self._stats.start_time = datetime_now()
         updater = asyncio.create_task(update_stats_file())
         try:
             await self.prepare()
