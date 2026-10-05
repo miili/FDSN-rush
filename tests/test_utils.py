@@ -31,6 +31,7 @@ DATE_ADAPTER = TypeAdapter(Date)
         ("XX", NSL("XX", "", "")),
         ("XX.STA01.00.HHZ", NSL("XX", "STA01", "00")),
         (["XX", "STA01", ""], NSL("XX", "STA01", "")),
+        ("X?.STA0[12].*", NSL("X?", "STA0[12]", "*")),
     ],
 )
 def test_nsl_parse(value: str | list[str], expected: NSL) -> None:

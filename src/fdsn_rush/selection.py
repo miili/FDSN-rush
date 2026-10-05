@@ -7,7 +7,12 @@ from itertools import groupby
 from typing import TYPE_CHECKING, Annotated, Literal, Self
 
 import aiohttp
-from pydantic import BaseModel, Field, PrivateAttr, model_validator
+from pydantic import (
+    AfterValidator,
+    BaseModel,
+    Field,
+    model_validator,
+)
 
 from fdsn_rush.client import HEADERS, _post_body, get_error_str
 from fdsn_rush.models.station import Stations, parse_stations
@@ -27,42 +32,79 @@ STATION_OPTIONS = {"level": "channel", "format": "text", "nodata": "404"}
 ALL_STATIONS = NSL("", "", "")
 
 
+def _check_server_pattern(nsl: NSL) -> NSL:
+    """FDSN servers only support the wildcards `*` and `?`, not `[...]`."""
+    if any("[" in code for code in nsl):
+        raise ValueError(
+            f"invalid selection {nsl.pretty}, FDSN servers only support"
+            " the wildcards `*` and `?`"
+        )
+    return nsl
+
+
+def _check_network(network: str) -> str:
+    _check_server_pattern(NSL(network, "", "")._check())
+    return network
+
+
+type NetworkCode = Annotated[str, AfterValidator(_check_network)]
+type ServerNSL = Annotated[NSLType, AfterValidator(_check_server_pattern)]
+
+
+def _network_lines(networks: set[str]) -> list[NSL]:
+    """Return one selection line per network, or a single wildcard line."""
+    if not networks:
+        return [ALL_STATIONS]
+    return [NSL(network, "", "") for network in sorted(networks)]
+
+
 class Selection(BaseModel):
     selection: Literal["Selection"] = "Selection"
 
-    _available_stations: Stations = PrivateAttr(default_factory=Stations)
-    _bootstrapped: bool = PrivateAttr(default=False)
+    exclude_stations: set[NSLType] = Field(
+        default_factory=set,
+        description="NSL selections for stations to exclude from download. "
+        "Empty codes are wildcards, codes may contain fnmatch patterns",
+    )
+
+    include_restricted: bool = Field(
+        default=True,
+        description="Include restricted stations, which need an EIDA token to download",
+    )
 
     @classmethod
     def _get_subclasses(cls) -> tuple[type[Selection], ...]:
         return tuple(cls.__subclasses__())
 
-    @property
-    def available_stations(self) -> Stations:
-        """Get the available stations for the selection."""
-        if not self._bootstrapped:
-            raise RuntimeError(
-                "Selection has not been bootstrapped. Call `prepare` first."
-            )
-        return self._available_stations
+    def _options(self, **options: float) -> dict[str, str]:
+        """Return the station query options, extended by `options`."""
+        query = dict(STATION_OPTIONS)
+        if not self.include_restricted:
+            query["includerestricted"] = "FALSE"
+        query.update({key: str(value) for key, value in options.items()})
+        return query
 
     def _requests(self) -> Iterator[tuple[str, dict[str, str], list[NSL]]]:
         """Yield a label, the options and the selection lines of each request."""
         raise NotImplementedError("This method should be implemented in subclasses.")
 
-    async def prepare(
+    async def get_available_stations(
         self,
         client: FDSNClient,
         starttime: date,
         endtime: date,
-    ) -> list[NSL]:
+    ) -> Stations:
         """Fetch the stations of the selection from the FDSN service.
 
-        Returns:
-            list[NSL]: The NSL codes of the available stations.
+        Args:
+            client: The FDSN client to use for the requests.
+            starttime: The start time of the selection.
+            endtime: The end time of the selection.
 
+        Returns:
+            Stations: The available stations.
         """
-        logger.info("Preparing FDSN service: %s", client.url)
+        logger.info("Preparing FDSN stations: %s", client.url)
         stations = Stations()
 
         async with aiohttp.ClientSession(
@@ -103,20 +145,20 @@ class Selection(BaseModel):
                     logger.warning("No usable channels found for %s", label)
                     continue
                 stations.extend(selected)
-                logger.info(
-                    "Fetched %d stations for %s", selected.n_stations, label
-                )
+                logger.info("Fetched %d stations for %s", selected.n_stations, label)
 
         logger.info("Got %d stations from %s", stations.n_stations, client.url)
-        self._available_stations = stations
-        self._bootstrapped = True
-        return [station.nsl for station in stations]
+        for exclude in sorted(self.exclude_stations):
+            for station in stations.remove(exclude):
+                logger.info("Excluding station %s", station.nsl.pretty)
+
+        return stations
 
 
 class StationSelection(Selection):
     selection: Literal["StationSelection"] = "StationSelection"
 
-    stations: list[NSLType] = Field(
+    stations: list[ServerNSL] = Field(
         default=[NSL("2D", "", "")],
         min_length=1,
         description="List of NSL selections for stations to download",
@@ -128,11 +170,17 @@ class StationSelection(Selection):
             sorted(self.stations, key=lambda nsl: nsl.network),
             key=lambda nsl: nsl.network,
         ):
-            yield f"network {network or '*'}", STATION_OPTIONS, list(nsls)
+            yield f"network {network or '*'}", self._options(), list(nsls)
 
 
 class GeographicSelection(Selection):
     selection: Literal["GeographicSelection"] = "GeographicSelection"
+
+    networks: set[NetworkCode] = Field(
+        default_factory=set,
+        description="Network codes to select within the area, all networks if empty. "
+        "Codes may contain fnmatch patterns",
+    )
 
     minlatitude: float = Field(
         default=40.68,
@@ -168,22 +216,27 @@ class GeographicSelection(Selection):
         return self
 
     def _requests(self) -> Iterator[tuple[str, dict[str, str], list[NSL]]]:
-        options = {
-            **STATION_OPTIONS,
-            "minlatitude": str(self.minlatitude),
-            "maxlatitude": str(self.maxlatitude),
-            "minlongitude": str(self.minlongitude),
-            "maxlongitude": str(self.maxlongitude),
-        }
+        options = self._options(
+            minlatitude=self.minlatitude,
+            maxlatitude=self.maxlatitude,
+            minlongitude=self.minlongitude,
+            maxlongitude=self.maxlongitude,
+        )
         label = (
             f"latitude {self.minlatitude}..{self.maxlatitude}, "
             f"longitude {self.minlongitude}..{self.maxlongitude}"
         )
-        yield label, options, [ALL_STATIONS]
+        yield label, options, _network_lines(self.networks)
 
 
 class RadiusSelection(Selection):
     selection: Literal["RadiusSelection"] = "RadiusSelection"
+
+    networks: set[NetworkCode] = Field(
+        default_factory=set,
+        description="Network codes to select within the area, all networks if empty. "
+        "Codes may contain fnmatch patterns",
+    )
 
     latitude: float = Field(
         default=CAMPI_FLEGREI[0],
@@ -217,19 +270,18 @@ class RadiusSelection(Selection):
         return self
 
     def _requests(self) -> Iterator[tuple[str, dict[str, str], list[NSL]]]:
-        options = {
-            **STATION_OPTIONS,
-            "latitude": str(self.latitude),
-            "longitude": str(self.longitude),
-            "maxradius": str(self.maxradius),
-        }
+        options = self._options(
+            latitude=self.latitude,
+            longitude=self.longitude,
+            maxradius=self.maxradius,
+        )
         if self.minradius:
             options["minradius"] = str(self.minradius)
         label = (
             f"radius {self.minradius}..{self.maxradius} deg "
             f"around {self.latitude}, {self.longitude}"
         )
-        yield label, options, [ALL_STATIONS]
+        yield label, options, _network_lines(self.networks)
 
 
 type SelectionType = Annotated[

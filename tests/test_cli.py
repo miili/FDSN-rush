@@ -19,6 +19,7 @@ from fdsn_rush import utils
 from fdsn_rush.app import app
 from fdsn_rush.client import FDSNClient
 from fdsn_rush.manager import FDSNDownloadManager
+from fdsn_rush.selection import StationSelection
 from fdsn_rush.writer import SDSWriter
 
 runner = CliRunner()
@@ -47,7 +48,7 @@ def _config(tmp_path: Path, url: str, selection: str = "XX.STA01") -> Path:
         clients=[FDSNClient(url=HttpUrl(url), rate_limit=1000)],
         metadata_path=tmp_path / "metadata",
         time_range=(date(2024, 1, 1), date(2024, 1, 2)),  # end is exclusive: one day
-        station_selection=[selection],
+        station_selection=StationSelection(stations=[selection]),
         channel_priority=["HH[ZNE]", "EH[ZNE]"],
         min_channels_per_station=1,
     )

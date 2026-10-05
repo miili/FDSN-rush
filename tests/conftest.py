@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, time
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
@@ -86,11 +87,18 @@ class FakeFDSN:
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
         self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
-        self.nodata_networks: set[str] = set()  # station queries answered with 404
 
     @property
     def url(self) -> str:
         return str(self.server.make_url("/"))
+
+
+def _matches(codes: list[str], patterns: list[str]) -> bool:
+    """Match NET STA LOC CHA codes against a POST selection line, "--" is blank."""
+    return all(
+        fnmatch(code, "" if pattern == "--" else pattern)
+        for code, pattern in zip(codes, patterns, strict=True)
+    )
 
 
 @pytest.fixture
@@ -112,11 +120,17 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
                     raise web.HTTPBadRequest(text=f"Error 400: bad line {line!r}")
                 selection.append(fields)
         fake.station_requests.append({"options": options, "selection": selection})
-        if selection and all(line[0] in fake.nodata_networks for line in selection):
+        # Geographic options are ignored, all stations are at 52.0, 13.0
+        lines = [
+            line
+            for line in STATION_TEXT.splitlines()[1:]
+            if any(_matches(line.split("|")[:4], fields[:4]) for fields in selection)
+        ]
+        if not lines:
             raise web.HTTPNotFound(text="Error 404: no data")
         if options.get("format") == "xml":
             return web.Response(text="<FDSNStationXML/>")
-        return web.Response(text=STATION_TEXT)
+        return web.Response(text="\n".join([STATION_HEADER, *lines]))
 
     async def dataselect(request: web.Request) -> web.Response:
         query = request.query

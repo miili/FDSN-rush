@@ -11,8 +11,9 @@ from pydantic import BaseModel, Field, PrivateAttr, computed_field, field_valida
 from rich.progress import track
 
 from fdsn_rush.client import DownloadDayfile, FDSNClient, FDSNClientStats
+from fdsn_rush.selection import SelectionType, StationSelection
 from fdsn_rush.stats import Stats
-from fdsn_rush.utils import NSL, Date, NSLType, date_today, datetime_now, report
+from fdsn_rush.utils import Date, date_today, datetime_now, report
 from fdsn_rush.writer import SDSWriter, SDSWriterStats
 
 if TYPE_CHECKING:
@@ -81,19 +82,14 @@ class FDSNDownloadManager(BaseModel):
         default_factory=lambda: (date_today() - timedelta(days=7), date_today()),
         description="Time range for downloading data",
     )
-    station_selection: list[NSLType] = Field(
-        default=[NSL("2D", "", "")],
-        min_length=1,
-        description="List of NSL selections for stations to download",
+    station_selection: SelectionType = Field(
+        default_factory=StationSelection,
+        description="Selection of stations to download data from",
     )
     channel_priority: list[str] = Field(
         default=["HH[ZNE12]", "EH[ZNE12]", "HN[ZNE12]"],
         min_length=1,
         description="List of channel codes to download",
-    )
-    station_blacklist: set[NSLType] = Field(
-        default_factory=set,
-        description="List of NSL selections for stations to exclude from download",
     )
     min_channels_per_station: int = Field(
         default=1,
@@ -142,27 +138,11 @@ class FDSNDownloadManager(BaseModel):
             )
         await self.writer.prepare()
 
-    def get_available_stations(self) -> list[NSL]:
-        """Get a list of available stations based on the selection and blacklist."""
-        available_stations = []
-        for client in self.clients:
-            for station in client.available_stations:
-                if not any(nsl.match(station.nsl) for nsl in self.station_selection):
-                    continue
-                if any(nsl.match(station.nsl) for nsl in self.station_blacklist):
-                    continue
-                available_stations.append(station.nsl)
-        return available_stations
-
     def get_work(self, client: FDSNClient) -> list[DownloadDayfile]:
         chunks: list[DownloadDayfile] = []
         n_stations = 0
 
         for station in client.available_stations:
-            if not any(nsl.match(station.nsl) for nsl in self.station_selection):
-                continue
-            if any(nsl.match(station.nsl) for nsl in self.station_blacklist):
-                continue
             n_stations += 1
 
             date = self.time_range[0]
@@ -277,13 +257,9 @@ class FDSNDownloadManager(BaseModel):
         """Download metadata for the selected stations."""
         report("metadata_folder", self.metadata_path)
         for client in self.clients:
-            available_stations = []
-            for station in client.available_stations:
-                if not any(nsl.match(station.nsl) for nsl in self.station_selection):
-                    continue
-                if any(nsl.match(station.nsl) for nsl in self.station_blacklist):
-                    continue
-                available_stations.append(station.nsl)
+            available_stations = sorted(
+                station.nsl for station in client.available_stations
+            )
 
             self.metadata_path.mkdir(parents=True, exist_ok=True)
             for network, stations in groupby(

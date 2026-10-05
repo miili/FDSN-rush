@@ -6,12 +6,23 @@ icon: lucide/filter
 
 Four settings control *what* FDSN Rush downloads:
 
-- `station_selection` and `station_blacklist`: which stations.
+- `station_selection`: which stations, by code, in a bounding box or within a radius.
 - `channel_priority` and `min_channels_per_station`: which channels per station.
 - `min_sampling_rate` and `max_sampling_rate`: which sampling rates are acceptable.
 - `time_range`: which days.
 
 ## Stations
+
+`station_selection` chooses the stations in one of three ways, set by `selection`. The FDSN server applies the selection and returns the matching channel inventory. All options are listed in the [configuration reference](../reference/configuration.md#station-selection).
+
+### By code
+
+```json
+"station_selection": {
+  "selection": "StationSelection",
+  "stations": ["GE", "2D.ST0?", "Z3.A*"]
+}
+```
 
 Stations are written as `NET.STA.LOC` codes, following the SEED convention. Parts you leave empty match anything:
 
@@ -23,18 +34,56 @@ Stations are written as `NET.STA.LOC` codes, following the SEED convention. Part
 | `"GE.A*"`   | all `GE` stations whose code starts with `A`  |
 | `"*.STU"`   | station `STU` in any network                  |
 
-Codes can contain shell-style wildcards: `*` (anything), `?` (one character) and `[...]` (one of a set of characters).
+Codes can contain the wildcards `*` (anything) and `?` (one character). FDSN servers reject `[...]`, so it is refused when the configuration is loaded.
+
+FDSN Rush sends one station query per network. A network that the server does not know is logged as a warning and does not affect the others.
+
+### In a bounding box
 
 ```json
-"station_selection": ["GE", "2D.ST0?", "Z3.A*"],
-"station_blacklist": ["GE.UGM", "2D.ST05"]
+"station_selection": {
+  "selection": "GeographicSelection",
+  "minlatitude": 40.68,
+  "maxlatitude": 40.98,
+  "minlongitude": 13.94,
+  "maxlongitude": 14.34,
+  "networks": ["IV"]
+}
 ```
 
-`station_blacklist` uses the same syntax. A station is downloaded if it matches *any* entry in `station_selection` and *no* entry in `station_blacklist`.
+Selects every station inside the box, bounds included. `networks` limits the box to some networks and may contain `*` and `?`. Leave it empty (the default) to get all networks.
 
-!!! note "How the server is queried"
+### Within a radius
 
-    FDSN Rush sends one station query per network in your selection. It asks for the channel-level inventory and then applies the selection and blacklist locally. Keep the network code explicit (`"GE.A*"` rather than `"*.A*"`) so the server returns only what you need.
+```json
+"station_selection": {
+  "selection": "RadiusSelection",
+  "latitude": 40.827,
+  "longitude": 14.139,
+  "maxradius": 0.15
+}
+```
+
+Selects every station within `maxradius` degrees of the centre. Set `minradius` to get a ring instead of a disc. `networks` works as for the bounding box.
+
+The defaults of both area selections cover the Campi Flegrei caldera, which INGV (`https://webservices.ingv.it/`) serves.
+
+### Excluding stations
+
+Every selection takes `exclude_stations`, in the same `NET.STA.LOC` syntax:
+
+```json
+"station_selection": {
+  "selection": "RadiusSelection",
+  "exclude_stations": ["IV.CPOZ", "IV.CS*"]
+}
+```
+
+Excluded stations are removed after the server has answered, so `[...]` works here too (`"IV.CA[AB]*"`).
+
+### Restricted stations
+
+Some stations are only available with an [EIDA token](restricted-data.md). Without one, set `"include_restricted": false` so that they are not selected at all instead of failing at download time.
 
 ## Channels
 

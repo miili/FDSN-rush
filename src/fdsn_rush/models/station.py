@@ -199,9 +199,31 @@ class Stations(BaseModel):
         """Iterate over the stations."""
         return iter(self.stations)
 
+    def __contains__(self, selector: object) -> bool:
+        """Check if any station matches the NSL selector."""
+        if not isinstance(selector, NSL):
+            return False
+        return any(selector.match(station.nsl) for station in self.stations)
+
     def extend(self, stations: Stations):
         """Append stations to the list."""
         self.stations.extend(stations.stations)
+
+    def remove(self, selector: NSL) -> list[Station]:
+        """Remove all stations matching the NSL selector.
+
+        Empty codes act as wildcards, codes may contain fnmatch patterns.
+
+        Returns:
+            list[Station]: The removed stations.
+
+        """
+        kept: list[Station] = []
+        removed: list[Station] = []
+        for station in self.stations:
+            (removed if selector.match(station.nsl) else kept).append(station)
+        self.stations = kept
+        return removed
 
     @property
     def n_stations(self) -> int:

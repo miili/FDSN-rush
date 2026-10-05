@@ -70,3 +70,37 @@ def test_get_channels_epoch_end(stations: Stations) -> None:
     sta03 = stations.get_station(NSL("XX", "STA03", ""))
     assert len(sta03.get_channels(date(2024, 1, 1))) == 1
     assert sta03.get_channels(date(2024, 1, 2)) == []
+
+
+@pytest.mark.parametrize(
+    ("selector", "expected"),
+    [
+        (NSL("XX", "STA01", ""), True),
+        (NSL("XX", "", ""), True),
+        (NSL("XX", "STA0*", ""), True),
+        (NSL("XX", "STA04", ""), False),
+        (NSL("YY", "", ""), False),
+        ("XX.STA01.", False),
+    ],
+)
+def test_stations_contains(
+    stations: Stations, selector: object, expected: bool
+) -> None:
+    assert (selector in stations) is expected
+
+
+@pytest.mark.parametrize(
+    ("selector", "removed", "kept"),
+    [
+        (NSL("XX", "STA02", ""), ["STA02"], ["STA01", "STA03"]),
+        (NSL("XX", "STA0[13]", ""), ["STA01", "STA03"], ["STA02"]),
+        (NSL("XX", "", ""), ["STA01", "STA02", "STA03"], []),
+        (NSL("YY", "", ""), [], ["STA01", "STA02", "STA03"]),
+    ],
+)
+def test_stations_remove(
+    stations: Stations, selector: NSL, removed: list[str], kept: list[str]
+) -> None:
+    assert [s.nsl.station for s in stations.remove(selector)] == removed
+    assert [s.nsl.station for s in stations] == kept
+    assert selector not in stations

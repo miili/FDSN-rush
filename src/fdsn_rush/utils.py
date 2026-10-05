@@ -91,6 +91,11 @@ FilePath = Annotated[
 ]
 
 
+def _is_pattern(code: str) -> bool:
+    """Check if a code contains fnmatch wildcards, so its length is no limit."""
+    return any(char in code for char in "*?[")
+
+
 class NSL(NamedTuple):
     network: str
     station: str
@@ -175,17 +180,17 @@ class NSL(NamedTuple):
             bool: True if the objects match, False otherwise.
 
         """
-        if len(self.network) > 2:
+        if len(self.network) > 2 and not _is_pattern(self.network):
             raise ValueError(
                 f"invalid network {self.network} for {self.pretty},"
                 " expected 0-2 characters for network code"
             )
-        if len(self.station) > 5:
+        if len(self.station) > 5 and not _is_pattern(self.station):
             raise ValueError(
                 f"invalid station {self.station} for {self.pretty},"
                 " expected 0-5 characters for station code"
             )
-        if len(self.location) > 2:
+        if len(self.location) > 2 and not _is_pattern(self.location):
             raise ValueError(
                 f"invalid location {self.location} for {self.pretty},"
                 " expected 0-2 characters for location code"
