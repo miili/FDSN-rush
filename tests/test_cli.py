@@ -204,25 +204,12 @@ async def test_metadata_downloads_no_waveforms(
     assert not list((tmp_path / "sds").glob("**/*.D.*"))
 
 
-async def test_check_reports_plan_and_writes_nothing(
-    tmp_path: Path, fake_fdsn: FakeFDSN
-) -> None:
-    config = _config(tmp_path, fake_fdsn.url)
+def test_check_valid_config(tmp_path: Path) -> None:
+    result = runner.invoke(app, ["check", str(_config(tmp_path, "http://x.invalid"))])
 
-    result = await asyncio.to_thread(runner.invoke, app, ["check", str(config)])
-
-    assert result.exit_code == 0, result.stderr
-    assert _report(result.stdout) == {
-        "server": fake_fdsn.url,
-        "stations": "1",
-        "dayfiles": "3",
-        "in_archive": "0",
-        "to_download": "3",
-        "status": "ok",
-    }
-    assert fake_fdsn.dataselect_requests == []
-    assert not (tmp_path / "sds").exists()
-    assert not (tmp_path / "metadata").exists()
+    assert result.exit_code == 0
+    assert _report(result.stdout) == {"status": "ok"}
+    assert not (tmp_path / "sds").exists()  # nothing is written
 
 
 def test_check_invalid_config(tmp_path: Path) -> None:

@@ -11,7 +11,7 @@ fdsn-rush [OPTIONS] COMMAND [ARGS]...
 | Command                 | Purpose                                              |
 | ----------------------- | ---------------------------------------------------- |
 | [`init`](#init)         | Print a configuration file with all defaults.        |
-| [`check`](#check)       | Show what `download` would do, without writing anything. |
+| [`check`](#check)       | Validate a configuration file.                       |
 | [`metadata`](#metadata) | Download only the station inventory and StationXML.  |
 | [`download`](#download) | Download data from FDSN servers into an SDS archive. |
 | [`convert`](#convert)   | Sort existing MiniSEED files into an SDS archive.    |
@@ -30,30 +30,13 @@ The defaults are documented in the [configuration reference](configuration.md).
 
 ## `check`
 
-Show what [`download`](#download) would do, without writing anything.
+Validate a configuration file.
 
 ```sh
 fdsn-rush check FILE
 ```
 
-It validates the configuration, fetches the station inventory from each server and prints `key: value` lines:
-
-```text
-server: https://geofon.gfz.de/
-stations: 2
-dayfiles: 14
-in_archive: 6
-to_download: 8
-status: ok
-```
-
-`stations`
-:   Stations that match your selection and blacklist.
-
-`dayfiles`, `in_archive`, `to_download`
-:   Channel-days that pass the selection, how many of them are already in the archive, and how many a `download` would request.
-
-The exit code is `0` for `ok`, `1` if a server could not be reached and `2` for an invalid configuration. Nothing is written to disk: no archive, no log file, no StationXML.
+It loads the file in strict mode, as `download` does, and prints `status: ok` with exit code `0`. For a missing or invalid file it prints `error: <message>` and `status: invalid_config` and exits with `2`. It contacts no server and writes nothing.
 
 ## `metadata`
 

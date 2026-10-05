@@ -85,16 +85,10 @@ Downloads always cover whole UTC days. A channel is only requested on days that 
 
 ## Checking a selection without downloading waveforms
 
-Run `check` to see how many stations and day files your selection covers, and how many are still missing from the archive:
-
-```sh
-fdsn-rush check config.json
-```
-
-Nothing is written. To inspect the stations and channels themselves, fetch the inventory and StationXML only:
+Run `metadata` to fetch the inventory and StationXML only:
 
 ```sh
 fdsn-rush metadata config.json
 ```
 
-Open `metadata/<NET>.xml` to see which stations and channels your selection covers before you start a large download.
+Open `metadata/<NET>.xml` to see which stations and channels your selection covers before you start a large download. To catch typos in the configuration file itself, run `fdsn-rush check config.json`.

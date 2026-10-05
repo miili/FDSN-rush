@@ -167,12 +167,9 @@ def metadata(
 
 @app.command()
 def check(file: ConfigFile) -> None:
-    """Show what `download` would do, without writing anything.
-
-    Prints key: value lines like `download --non-interactive`.
-    """
-    manager = _start(file, 0, non_interactive=True, log=False)
-    _run(manager, manager.check(), summary=False)
+    """Validate the configuration file."""
+    _start(file, 0, non_interactive=True, log=False)
+    report("status", "ok")
 
 
 @app.command()

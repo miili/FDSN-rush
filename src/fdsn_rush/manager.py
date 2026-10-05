@@ -226,13 +226,6 @@ class FDSNDownloadManager(BaseModel):
 
         await client.download(writer, self._file_done)
 
-    async def check(self) -> None:
-        """Fetch the inventory and report what `download()` would do. Writes nothing."""
-        for client in self.clients:
-            report("server", client.url)
-            await client.prepare(self.station_selection, *self.time_range)
-            self.get_work(client)
-
     async def download(self, metadata_only: bool = False):
         """Download data using all configured clients.
 

@@ -13,7 +13,7 @@ echo $?
 
 ## Output
 
-`download` and `metadata` accept `--non-interactive`; [`check`](../reference/cli.md#check) always prints in this format. It switches off the live view, progress bars and log lines. The only thing printed is a few `key: value` lines on stdout, and stderr stays empty:
+`download` and `metadata` accept `--non-interactive`, and [`check`](../reference/cli.md#check) always prints in this format. It switches off the live view, progress bars and log lines. The only thing printed is a few `key: value` lines on stdout, and stderr stays empty:
 
 ```text
 log_file: data/fdsn-rush.log
@@ -34,7 +34,7 @@ status: ok
 :   A server that is being downloaded from. One line per server.
 
 `stations`, `dayfiles`, `in_archive`, `to_download`
-:   The plan: matching stations, channel-days that pass the selection, those already in the archive, and those requested. The same numbers as [`check`](../reference/cli.md#check). They are printed once per server.
+:   The plan: matching stations, channel-days that pass the selection, those already in the archive, and those requested. They are printed once per server.
 
 `files`
 :   Dayfiles saved in this run.
