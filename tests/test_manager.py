@@ -18,7 +18,7 @@ TIME_RANGE = (date(2024, 1, 1), date(2024, 1, 3))
 
 
 def _manager(tmp_path: Path, url: str, **kwargs) -> FDSNDownloadManager:
-    kwargs.setdefault("station_selection", StationSelection(stations=["XX"]))
+    kwargs.setdefault("station_selections", [StationSelection(stations=["XX"])])
     return FDSNDownloadManager(
         writer=SDSWriter(sds_archive=tmp_path / "data"),
         clients=[FDSNClient(url=HttpUrl(url), rate_limit=1000)],
@@ -46,6 +46,11 @@ def test_config_roundtrip(tmp_path: Path) -> None:
 def test_config_missing(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         FDSNDownloadManager.load(tmp_path / "missing.json")
+
+
+def test_config_needs_a_selection() -> None:
+    with pytest.raises(ValidationError, match="station_selections"):
+        FDSNDownloadManager(station_selections=[])
 
 
 def test_config_invalid_time_range() -> None:
@@ -78,9 +83,9 @@ async def test_get_work_exclude_and_archive(
     manager = _manager(
         tmp_path,
         fake_fdsn.url,
-        station_selection=StationSelection(
-            stations=["XX"], exclude_stations={"XX.STA02"}
-        ),
+        station_selections=[
+            StationSelection(stations=["XX"], exclude_stations={"XX.STA02"})
+        ],
     )
     client = manager.clients[0]
     await manager.prepare()
@@ -97,17 +102,65 @@ async def test_get_work_exclude_and_archive(
     assert len(work) == 5
 
 
+async def test_prepare_merges_selections(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
+    manager = _manager(
+        tmp_path,
+        fake_fdsn.url,
+        station_selections=[
+            StationSelection(stations=["XX.STA01"]),
+            StationSelection(stations=["XX.STA03", "XX.STA01"]),
+        ],
+    )
+    await manager.prepare()
+
+    (client,) = manager.clients
+    assert [s.nsl.pretty for s in client.available_stations] == [
+        "XX.STA01.",
+        "XX.STA03.",
+    ]
+    assert len(fake_fdsn.station_requests) == 2
+
+
+async def test_prepare_skips_failed_selection(
+    tmp_path: Path, fake_fdsn: FakeFDSN
+) -> None:
+    """A selection that fails completely must not stop the other selections."""
+    fake_fdsn.station_errors = {"YY": [400]}
+    manager = _manager(
+        tmp_path,
+        fake_fdsn.url,
+        station_selections=[
+            StationSelection(stations=["YY"]),
+            StationSelection(stations=["XX"]),
+        ],
+    )
+    await manager.prepare()
+
+    (client,) = manager.clients
+    assert client.available_stations.n_stations == 3
+    assert client._stats.n_station_queries_failed == 1
+
+
 async def test_prepare_skips_failed_client(tmp_path: Path, fake_fdsn: FakeFDSN) -> None:
     """An unreachable server must not stop the clients of other servers."""
-    manager = _manager(tmp_path, fake_fdsn.url)
-    manager.clients.append(FDSNClient(url=HttpUrl("http://127.0.0.1:1"), timeout=1.0))
+    manager = _manager(
+        tmp_path,
+        fake_fdsn.url,
+        station_selections=[
+            StationSelection(stations=["XX.STA01"]),
+            StationSelection(stations=["XX.STA02", "XX.STA03"]),
+        ],
+    )
+    manager.clients.insert(
+        0, FDSNClient(url=HttpUrl("http://127.0.0.1:1"), timeout=1.0)
+    )
 
     await manager.prepare()
 
-    working, unreachable = manager.clients
+    unreachable, working = manager.clients
     assert working.available_stations.n_stations == 3
     assert unreachable.available_stations.n_stations == 0
-    assert unreachable._stats.n_station_queries_failed == 1
+    assert unreachable._stats.n_station_queries_failed == 2
     assert manager.get_work(unreachable) == []
 
 

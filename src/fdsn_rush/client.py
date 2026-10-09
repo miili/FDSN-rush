@@ -289,24 +289,28 @@ class FDSNClient(Model):
         default_factory=asyncio.Queue
     )
 
-    async def prepare(
+    async def prepare(self) -> None:
+        """Reset the available stations, add them with `add_selection`."""
+        logger.info("Preparing FDSN service: %s", self.url)
+        self._stats.set_client(self)
+        self.available_stations = Stations()
+
+    async def add_selection(
         self,
         selection: Selection,
         starttime: date,
         endtime: date,
     ) -> None:
-        """Fetch available stations from the FDSN service.
+        """Fetch the stations of a selection and add them to the available stations.
 
-        If some station queries fail, the stations of the others are kept and
-        the failures are counted in the stats.
+        Stations that are already available are skipped. If some station
+        queries fail, the stations of the others are kept and the failures are
+        counted in the stats.
 
         Raises:
-            StationQueryError: If station queries failed and no station is left.
+            StationQueryError: If station queries failed and the selection
+                yielded no station.
         """
-        logger.info("Preparing FDSN service: %s", self.url)
-        self._stats.set_client(self)
-        self.available_stations = Stations()
-
         try:
             stations = await selection.get_available_stations(self, starttime, endtime)
         except StationQueryError as e:
@@ -315,10 +319,10 @@ class FDSNClient(Model):
                 raise
             logger.error("%s, continuing with %d stations", e, e.stations.n_stations)
             stations = e.stations
-        self.available_stations = stations
+        self.available_stations.extend(stations)
 
         logger.info(
-            "Got %d stations from %s",
+            "%d stations available from %s",
             self.available_stations.n_stations,
             self.url,
         )

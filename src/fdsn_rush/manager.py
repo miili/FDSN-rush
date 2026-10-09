@@ -17,7 +17,12 @@ from fdsn_rush.client import (
     FDSNClientStats,
     StationQueryError,
 )
-from fdsn_rush.selection import SelectionType, StationSelection
+from fdsn_rush.selection import (
+    GeographicSelection,
+    RadiusSelection,
+    SelectionType,
+    StationSelection,
+)
 from fdsn_rush.stats import Stats
 from fdsn_rush.utils import Date, date_today, datetime_now, report
 from fdsn_rush.writer import SDSWriter, SDSWriterStats
@@ -88,9 +93,15 @@ class FDSNDownloadManager(Model):
         default_factory=lambda: (date_today() - timedelta(days=7), date_today()),
         description="Time range for downloading data",
     )
-    station_selection: SelectionType = Field(
-        default_factory=StationSelection,
-        description="Selection of stations to download data from",
+    station_selections: list[SelectionType] = Field(
+        default_factory=lambda: [
+            StationSelection(),
+            GeographicSelection(),
+            RadiusSelection(),
+        ],
+        min_length=1,
+        description="Selections of stations to download data from. "
+        "The stations of all selections are downloaded",
     )
     channel_priority: list[str] = Field(
         default=["HH[ZNE12]", "EH[ZNE12]", "HN[ZNE12]"],
@@ -138,16 +149,21 @@ class FDSNDownloadManager(Model):
         """Prepare the download manager by initializing the writer and clients."""
         errors: list[StationQueryError] = []
         for client in self.clients:
-            try:
-                await client.prepare(
-                    self.station_selection,
-                    self.time_range[0],
-                    self.time_range[1],
-                )
-            except StationQueryError as e:
-                # One unreachable server must not stop the others
-                logger.error("%s", e)
-                errors.append(e)
+            await client.prepare()
+            client_errors: list[StationQueryError] = []
+            for selection in self.station_selections:
+                try:
+                    await client.add_selection(
+                        selection,
+                        self.time_range[0],
+                        self.time_range[1],
+                    )
+                except StationQueryError as e:
+                    # One failed selection or server must not stop the others
+                    logger.error("%s", e)
+                    client_errors.append(e)
+            if len(client_errors) == len(self.station_selections):
+                errors.append(client_errors[0])
         if len(errors) == len(self.clients):
             raise errors[0]
         await self.writer.prepare()

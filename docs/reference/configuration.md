@@ -22,7 +22,7 @@ You can leave out any option, and it takes its default. The smallest useful conf
 
 ```json title="config.json"
 {
-  "station_selection": {"selection": "StationSelection", "stations": ["GE.APE"]},
+  "station_selections": [{"selection": "StationSelection", "stations": ["GE.APE"]}],
   "time_range": ["2026-09-01", "2026-09-03"]
 }
 ```
@@ -33,10 +33,10 @@ Unknown options are an error, so a misspelled option such as `station_selecton` 
 
 ## Top level
 
-`station_selection`
-:   **Object** · default: all stations of network `2D` · see [Station selection](#station-selection)
+`station_selections`
+:   **List of objects** · default: network `2D`, plus the Campi Flegrei bounding box and radius · see [Station selection](#station-selection)
 
-    Which stations to download: by code, in a bounding box or within a radius.
+    Which stations to download: by code, in a bounding box or within a radius. The stations of all selections are downloaded, a station that several selections match only once. At least one selection is required. The default has one selection of each type as an example, so `fdsn-rush init` shows all of them. Keep the ones you need.
 
 `time_range`
 :   **Pair of dates** · default: the last seven days, `["<7 days ago>", "today"]`
@@ -76,7 +76,7 @@ Unknown options are an error, so a misspelled option such as `station_selecton` 
 
 ## Station selection
 
-`station_selection` picks the stations by one of three methods, chosen with `selection`. The FDSN server does the selecting. Each client queries its own server with the same selection.
+Each entry of `station_selections` picks stations by one of three methods, chosen with `selection`. The FDSN server does the selecting. Each client queries its own server with every selection.
 
 === "By code"
 
@@ -84,7 +84,7 @@ Unknown options are an error, so a misspelled option such as `station_selecton` 
     from fdsn_rush.selection import StationSelection
 
     selection = StationSelection(stations=["GE", "IV.CPOZ"])
-    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    print(selection.model_dump_json(indent=2))
     ```
 
 === "Bounding box"
@@ -93,7 +93,7 @@ Unknown options are an error, so a misspelled option such as `station_selecton` 
     from fdsn_rush.selection import GeographicSelection
 
     selection = GeographicSelection()
-    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    print(selection.model_dump_json(indent=2))
     ```
 
 === "Radius"
@@ -102,7 +102,7 @@ Unknown options are an error, so a misspelled option such as `station_selecton` 
     from fdsn_rush.selection import RadiusSelection
 
     selection = RadiusSelection()
-    print('"station_selection": ' + selection.model_dump_json(indent=2))
+    print(selection.model_dump_json(indent=2))
     ```
 
 The defaults of the bounding box and the radius cover the Campi Flegrei caldera, Italy.

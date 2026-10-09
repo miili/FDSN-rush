@@ -6,19 +6,30 @@ icon: lucide/filter
 
 Four settings control *what* FDSN Rush downloads:
 
-- `station_selection`: which stations, by code, in a bounding box or within a radius.
+- `station_selections`: which stations, by code, in a bounding box or within a radius.
 - `channel_priority` and `min_channels_per_station`: which channels per station.
 - `min_sampling_rate` and `max_sampling_rate`: which sampling rates are acceptable.
 - `time_range`: which days.
 
 ## Stations
 
-`station_selection` chooses the stations in one of three ways, set by `selection`. The FDSN server applies the selection and returns the matching channel inventory. All options are listed in the [configuration reference](../reference/configuration.md#station-selection).
+`station_selections` is a list of selections. Each one chooses stations in one of three ways, set by `selection`. The FDSN server applies the selection and returns the matching channel inventory. All options are listed in the [configuration reference](../reference/configuration.md#station-selection).
+
+The stations of all selections are downloaded. A station that several selections match is downloaded once:
+
+```json
+"station_selections": [
+  {"selection": "StationSelection", "stations": ["GE.APE"]},
+  {"selection": "RadiusSelection", "networks": ["IV"], "maxradius": 0.1}
+]
+```
+
+The examples below show one entry of the list each.
 
 ### By code
 
 ```json
-"station_selection": {
+{
   "selection": "StationSelection",
   "stations": ["GE", "2D.ST0?", "Z3.A*"]
 }
@@ -41,7 +52,7 @@ FDSN Rush sends one station query per network. A network that the server does no
 ### In a bounding box
 
 ```json
-"station_selection": {
+{
   "selection": "GeographicSelection",
   "minlatitude": 40.68,
   "maxlatitude": 40.98,
@@ -56,7 +67,7 @@ Selects every station inside the box, bounds included. `networks` limits the box
 ### Within a radius
 
 ```json
-"station_selection": {
+{
   "selection": "RadiusSelection",
   "latitude": 40.827,
   "longitude": 14.139,
@@ -73,17 +84,17 @@ The defaults of both area selections cover the Campi Flegrei caldera, which INGV
 Every selection takes `exclude_stations`, in the same `NET.STA.LOC` syntax:
 
 ```json
-"station_selection": {
+{
   "selection": "RadiusSelection",
   "exclude_stations": ["IV.CPOZ", "IV.CS*"]
 }
 ```
 
-Excluded stations are removed after the server has answered. Here, empty parts match anything in every position (`".CPOZ"`, `"IV..01"`), `--` is the blank location, and `[...]` works too (`"IV.CA[AB]*"`).
+Excluded stations are removed after the server has answered, from this selection only. A station that another selection matches is still downloaded. Here, empty parts match anything in every position (`".CPOZ"`, `"IV..01"`), `--` is the blank location, and `[...]` works too (`"IV.CA[AB]*"`).
 
 ### When the server fails
 
-A station query that fails with a server error (5xx), `429 Too Many Requests`, a timeout or a lost connection is retried twice, after 1 s and 2 s. Other errors, such as `400 Bad Request` or `401 Unauthorized`, are not retried. A failed query is logged and counted as `failed_queries`. The stations of the other queries are still downloaded, and the run ends as `partial`. If the failures leave no station, the run stops with an `error`. See [Scripting and automation](scripting.md).
+A station query that fails with a server error (5xx), `429 Too Many Requests`, a timeout or a lost connection is retried twice, after 1 s and 2 s. Other errors, such as `400 Bad Request` or `401 Unauthorized`, are not retried. A failed query is logged and counted as `failed_queries`. The stations of the other queries are still downloaded, and the run ends as `partial`. If every selection fails on every client, the run stops with an `error`. See [Scripting and automation](scripting.md).
 
 ### Restricted stations
 

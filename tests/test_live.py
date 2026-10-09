@@ -41,7 +41,8 @@ async def test_wildcard_location_matches_all(url: str) -> None:
     nsl = "IU.ANMO" if "iris" in url else "GE.APE"
     client = FDSNClient(url=url)
     selection = StationSelection(stations=[f"{nsl}.", f"{nsl}.00"])
-    await client.prepare(selection, *DAY)
+    await client.prepare()
+    await client.add_selection(selection, *DAY)
 
     locations = _locations(client)
     assert locations
