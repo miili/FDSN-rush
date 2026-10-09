@@ -17,7 +17,8 @@ async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
     selection = StationSelection(stations=["XX.STA01", "YY.STA01", "XX.STA02"])
 
-    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+    await client.prepare()
+    await client.add_selection(selection, date(2024, 1, 1), date(2024, 1, 3))
 
     requests = fake_fdsn.station_requests
     assert len(requests) == 2
@@ -39,12 +40,31 @@ async def test_prepare_requests_each_network_once(fake_fdsn: FakeFDSN) -> None:
 
 async def test_prepare_twice_replaces_stations(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
-    selection = StationSelection(stations=["XX"])
+    selection = StationSelection(stations=["XX.STA01"])
 
-    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
-    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+    await client.prepare()
+    await client.add_selection(selection, date(2024, 1, 1), date(2024, 1, 3))
+    await client.prepare()
+    assert client.available_stations.n_stations == 0
 
-    assert client.available_stations.n_stations == 3
+    await client.add_selection(selection, date(2024, 1, 1), date(2024, 1, 3))
+    assert client.available_stations.n_stations == 1
+
+
+async def test_add_selection_merges_stations(fake_fdsn: FakeFDSN) -> None:
+    """Selections add up, a station matched by several is kept once."""
+    client = FDSNClient(url=fake_fdsn.url)
+    await client.prepare()
+
+    for nsl in ("XX.STA01", "XX.STA*"):
+        selection = StationSelection(stations=[nsl])
+        await client.add_selection(selection, date(2024, 1, 1), date(2024, 1, 3))
+
+    assert [s.nsl.pretty for s in client.available_stations] == [
+        "XX.STA01.",
+        "XX.STA02.",
+        "XX.STA03.",
+    ]
 
 
 async def test_prepare_keeps_selections_apart(fake_fdsn: FakeFDSN) -> None:
@@ -52,7 +72,8 @@ async def test_prepare_keeps_selections_apart(fake_fdsn: FakeFDSN) -> None:
     client = FDSNClient(url=fake_fdsn.url)
     selection = StationSelection(stations=["XX.STA01.", "XX.STA02.10"])
 
-    await client.prepare(selection, date(2024, 1, 1), date(2024, 1, 3))
+    await client.prepare()
+    await client.add_selection(selection, date(2024, 1, 1), date(2024, 1, 3))
 
     (request,) = fake_fdsn.station_requests
     assert [line[:4] for line in request["selection"]] == [

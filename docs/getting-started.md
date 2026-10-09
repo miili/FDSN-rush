@@ -81,15 +81,17 @@ Open `config.json` and change the station selection and the time range, the two 
     "2026-09-01",
     "2026-09-03"
   ],
-  "station_selection": {
-    "selection": "StationSelection",
-    "exclude_stations": [],
-    "include_restricted": true,
-    "stations": [
-      "GE.APE.",
-      "GE.STU."
-    ]
-  },
+  "station_selections": [
+    {
+      "selection": "StationSelection",
+      "exclude_stations": [],
+      "include_restricted": true,
+      "stations": [
+        "GE.APE.",
+        "GE.STU."
+      ]
+    }
+  ],
   "channel_priority": [
     "HH[ZNE12]",
     "EH[ZNE12]",
@@ -103,7 +105,7 @@ Open `config.json` and change the station selection and the time range, the two 
 
 This configuration does the following:
 
-- It asks GEOFON (`clients`) for stations `APE` and `STU` of the `GE` network (`station_selection`).
+- It asks GEOFON (`clients`) for stations `APE` and `STU` of the `GE` network (`station_selections`).
 - It downloads the UTC days **September 1 and 2**. The end of `time_range` is exclusive.
 - It prefers `HH` channels and falls back to `EH`, then `HN` (`channel_priority`). It takes a channel group only if all three components are available (`min_channels_per_station`).
 - It writes waveforms to `data/` and StationXML to `metadata/`.

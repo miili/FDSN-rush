@@ -32,7 +32,7 @@ pip install fdsn-rush
 
 ```sh
 fdsn-rush init > config.json      # write the default configuration
-# edit station_selection and time_range in config.json
+# edit station_selections and time_range in config.json
 fdsn-rush download config.json    # download into data/ and metadata/
 ```
 

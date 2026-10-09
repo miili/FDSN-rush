@@ -48,7 +48,7 @@ def _config(tmp_path: Path, url: str, *selection: str) -> Path:
         clients=[FDSNClient(url=HttpUrl(url), rate_limit=1000)],
         metadata_path=tmp_path / "metadata",
         time_range=(date(2024, 1, 1), date(2024, 1, 2)),  # end is exclusive: one day
-        station_selection=StationSelection(stations=list(selection or ["XX.STA01"])),
+        station_selections=[StationSelection(stations=list(selection or ["XX.STA01"]))],
         channel_priority=["HH[ZNE]", "EH[ZNE]"],
         min_channels_per_station=1,
     )
@@ -280,7 +280,8 @@ def test_check_invalid_config(tmp_path: Path) -> None:
     [
         {"station_blacklist": ["GE.APE"]},  # removed option
         {"station_selecton": {"selection": "StationSelection"}},  # misspelled
-        {"station_selection": {"selection": "StationSelection", "networks": ["GE"]}},
+        {"station_selection": {"selection": "StationSelection"}},  # renamed
+        {"station_selections": [{"selection": "StationSelection", "networks": ["GE"]}]},
         {"writer": {"sds_archiv": "data"}},
         {"clients": [{"urll": "https://geofon.gfz.de"}]},
     ],

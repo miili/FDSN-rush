@@ -35,14 +35,14 @@ Add one client per data centre when your networks are archived in different plac
   { "url": "https://geofon.gfz.de/" },
   { "url": "https://webservices.ingv.it/" }
 ],
-"station_selection": {"selection": "StationSelection", "stations": ["GE", "IV"]}
+"station_selections": [{"selection": "StationSelection", "stations": ["GE", "IV"]}]
 ```
 
-Each client downloads every station *it* offers that matches `station_selection`.
+Each client downloads every station *it* offers that matches `station_selections`.
 
 !!! warning "Avoid overlapping data centres"
 
-    If two clients offer the same station, both download it at the same time into the same day file. The result is unreliable. Make sure each network in `station_selection` is served by only one of your clients. If needed, split the download into one configuration file per data centre, writing to the same archive one after another.
+    If two clients offer the same station, both download it at the same time into the same day file. The result is unreliable. Make sure each network in `station_selections` is served by only one of your clients. If needed, split the download into one configuration file per data centre, writing to the same archive one after another.
 
 ## Tuning a client
 
