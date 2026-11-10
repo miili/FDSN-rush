@@ -51,23 +51,17 @@ INFO     Preparing PGP authentication using key: /home/you/.eidatoken
 INFO     Using EIDA token for you@example.org valid until 2026-10-30 12:00:00+00:00
 ```
 
-The node forgets the temporary credentials after 24 hours at the latest, and when it restarts. Its requests then fail with *401 Unauthorized*. FDSN Rush then exchanges the token again, once for all workers, and repeats the requests:
+A *401 Unauthorized* means that the node rejected the login. It forgets the temporary credentials after 24 hours at the latest, and when it restarts. A 401 is retried like a server error, after 2 s and 4 s, and FDSN Rush exchanges the token again, at most once a minute for all workers:
 
 ```text
 WARNING  Credentials rejected by https://geofon.gfz.de/, exchanging the EIDA token again
 ```
 
-The token file is read again for this, so you can replace an expiring token while a long download runs. If the exchange fails, for example because the token has expired, the error is logged and the remaining restricted day files fail. They are requested again on the next run.
-
-A *401* for credentials less than a minute old, or a second *401* right after a new exchange, means that the token does not grant that network. The network is then logged once and does not cause further exchanges:
-
-```text
-WARNING  EIDA token does not grant network WB at https://geofon.gfz.de/
-```
+The token file is read again for this, so you can replace an expiring token while a long download runs. If the exchange fails, for example because the token has expired, the error is logged and not repeated. Day files that still fail with 401 are requested again on the next run.
 
 !!! warning "Access is granted per network"
 
-    A token proves who you are. It does not grant access to every network. If you are not authorised for a network, its requests fail with *401 Unauthorized* or *403 Forbidden*. Ask the network operator for access.
+    A token proves who you are. It does not grant access to every network. If you are not authorised for a network, its requests fail with *403 Forbidden*. Ask the network operator for access.
 
 ## Several EIDA nodes
 
