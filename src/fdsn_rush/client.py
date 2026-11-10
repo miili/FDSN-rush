@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 from collections import defaultdict, deque
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
@@ -60,7 +60,10 @@ ERRORS = {
 
 # Requests that fail with these are retried, with the delay doubling
 RETRY_ATTEMPTS = 3
-RETRY_DELAY = 1.0
+RETRY_DELAY = 2.0
+# Longest wait a server's Retry-After header may impose
+RETRY_AFTER_MAX = 60.0
+RETRY_STATUS = {429, 500, 502, 503, 504}
 TRANSIENT_ERRORS = (
     aiohttp.ClientConnectionError,
     aiohttp.ClientPayloadError,
@@ -92,6 +95,15 @@ def _clean_params(params: dict[str, Any]) -> None:
     for key in list(params.keys()):
         if not params[key]:
             params.pop(key, None)
+
+
+def retry_after(headers: Mapping[str, str] | None) -> float:
+    """Return the seconds of a Retry-After header, 0 if missing or a date."""
+    try:
+        seconds = float((headers or {}).get("Retry-After", 0))
+    except ValueError:
+        return 0.0
+    return min(max(seconds, 0.0), RETRY_AFTER_MAX)
 
 
 def get_error_str(error_code: int) -> str:
@@ -490,16 +502,23 @@ class FDSNClient(Model):
         client: aiohttp.ClientSession,
         writer: SDSWriter,
         dayfile: DownloadDayfile,
+        wait: Callable[[], Awaitable[None]],
     ) -> None:
         """Download a dayfile into the writer, retrying transient errors.
 
-        The partial data of a failed attempt is discarded.
+        Every attempt first awaits `wait`, the rate limiter. Lost connections,
+        timeouts and `RETRY_STATUS` responses are retried, after the longer of
+        the backoff and the server's Retry-After header. The partial data of a
+        failed attempt is discarded.
 
         Raises:
             aiohttp.ClientResponseError: If the server answered with an error.
             TRANSIENT_ERRORS: If the last attempt failed.
         """
         for attempt in range(RETRY_ATTEMPTS):
+            await wait()
+            last_attempt = attempt + 1 == RETRY_ATTEMPTS
+            server_delay = 0.0
             try:
                 async for data in self.download_waveform_data(
                     client=client,
@@ -507,22 +526,28 @@ class FDSNClient(Model):
                     date=dayfile.date,
                 ):
                     await writer.add_data(dayfile, data)
+            except aiohttp.ClientResponseError as e:
+                if e.status not in RETRY_STATUS or last_attempt:
+                    raise
+                error = f"{e.status} {get_error_str(e.status)}"
+                server_delay = retry_after(e.headers)
             except TRANSIENT_ERRORS as e:
                 await writer.discard(dayfile)
-                if attempt + 1 == RETRY_ATTEMPTS:
+                if last_attempt:
                     raise
-                delay = RETRY_DELAY * 2**attempt
-                logger.warning(
-                    "Download of %s for %s failed (%s: %s), retrying in %.0f s",
-                    dayfile.channel.nslc.pretty,
-                    dayfile.date,
-                    type(e).__name__,
-                    e,
-                    delay,
-                )
-                await asyncio.sleep(delay)
+                error = f"{type(e).__name__}: {e}"
             else:
                 return
+
+            delay = max(RETRY_DELAY * 2**attempt, server_delay)
+            logger.warning(
+                "Download of %s for %s failed (%s), retrying in %.0f s",
+                dayfile.channel.nslc.pretty,
+                dayfile.date,
+                error,
+                delay,
+            )
+            await asyncio.sleep(delay)
 
     async def add_work(self, download: DownloadDayfile) -> None:
         """Add a download task to the work queue."""
@@ -543,6 +568,10 @@ class FDSNClient(Model):
                 async with rate_limiter:
                     rate_limiter.notify()
                 await asyncio.sleep(1.0 / self.rate_limit)
+
+        async def wait_rate_limit() -> None:
+            async with rate_limiter:
+                await rate_limiter.wait()
 
         async def worker(client: aiohttp.ClientSession) -> None:
             while not self._work_queue.empty():
@@ -565,9 +594,6 @@ class FDSNClient(Model):
                     await asyncio.sleep(0.0)
                     continue
 
-                async with rate_limiter:
-                    await rate_limiter.wait()
-
                 logger.info(
                     "Starting download %s.%s for %s",
                     chunk.channel.nsl.pretty,
@@ -576,7 +602,7 @@ class FDSNClient(Model):
                 )
 
                 try:
-                    await self.download_dayfile(client, writer, chunk)
+                    await self.download_dayfile(client, writer, chunk, wait_rate_limit)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
                     if error_code == 404:
@@ -599,6 +625,16 @@ class FDSNClient(Model):
                         error_code,
                     )
                     continue
+                # Before ClientConnectionError: aiohttp's timeouts subclass both
+                except TimeoutError:
+                    self._stats.n_failed += 1
+                    logger.error(
+                        "Failed to download %s for %s: Remote timeout (%.1f s)",
+                        chunk.channel.nslc.pretty,
+                        chunk.date,
+                        self.timeout,
+                    )
+                    continue
                 except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError) as e:
                     self._stats.n_failed += 1
                     logger.error(
@@ -607,16 +643,6 @@ class FDSNClient(Model):
                         chunk.date,
                         type(e).__name__,
                         e,
-                    )
-                    continue
-
-                except TimeoutError:
-                    self._stats.n_failed += 1
-                    logger.error(
-                        "Failed to download %s for %s: Remote timeout (%.1f s)",
-                        chunk.channel.nslc.pretty,
-                        chunk.date,
-                        self.timeout,
                     )
                     continue
                 finally:

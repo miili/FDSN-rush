@@ -95,9 +95,10 @@ class FakeFDSN:
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
         self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
-        # Dropped connections for an NSLC, one per query: "start" before the
-        # response, "body" halfway through it
-        self.disconnects: dict[tuple[str, str, str, str], list[str]] = {}
+        # Faults for an NSLC, one per query: "start" drops the connection before
+        # the response, "body" halfway through it, "slow" waits 0.5 s before the
+        # response, and a status code answers with it and `Retry-After: 0`
+        self.faults: dict[tuple[str, str, str, str], list[str | int]] = {}
         # Status codes to answer station queries for a network with, one per query
         self.station_errors: dict[str, list[int]] = {}
 
@@ -174,12 +175,20 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
         if nslc in MISSING_NSLC:
             raise web.HTTPNotFound(text="Error 404: no data")
         body = make_mseed(nslc, start.date())
-        disconnects = fake.disconnects.get(nslc)
-        if not disconnects:
+        faults = fake.faults.get(nslc)
+        if not faults:
             return web.Response(body=body)
 
+        fault = faults.pop(0)
+        if isinstance(fault, int):
+            return web.Response(
+                status=fault, headers={"Retry-After": "0"}, text=f"Error {fault}"
+            )
+        if fault == "slow":
+            await asyncio.sleep(0.5)
+            return web.Response(body=body)
         assert request.transport is not None
-        if disconnects.pop(0) == "start":
+        if fault == "start":
             request.transport.close()
             return web.Response(body=body)
         response = web.StreamResponse()

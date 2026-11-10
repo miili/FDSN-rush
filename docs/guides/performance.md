@@ -58,7 +58,7 @@ The defaults are polite to public servers and fast enough for most archives. All
 :   Size of the HTTP connection pool. Keep it at or above `n_workers`.
 
 `timeout` (default 30 s)
-:   How long a request may wait for the next piece of data before it is abandoned. Raise it for slow servers that take long to assemble a day file. A timed-out day file is retried twice, after 1 s and 2 s, and then on the next run.
+:   How long a request may wait for the next piece of data before it is abandoned. Raise it for slow servers that take long to assemble a day file. A timed-out day file is retried twice, after 2 s and 4 s, and then on the next run.
 
 `chunk_size` (default `"4.0MiB"`)
 :   How much data is read from the network before it is written to disk. Accepts units such as `"1MiB"` or `"16MiB"` (minimum `1MiB`).

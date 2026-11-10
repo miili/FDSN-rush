@@ -19,9 +19,11 @@ from fdsn_rush.client import (
     HEADERS,
     RETRY_ATTEMPTS,
     RETRY_DELAY,
+    RETRY_STATUS,
     TRANSIENT_ERRORS,
     StationQueryError,
     get_error_str,
+    retry_after,
 )
 from fdsn_rush.models.station import Stations, parse_stations
 from fdsn_rush.utils import NSL, NSLType, fdsn_float, fdsn_post_body
@@ -39,9 +41,6 @@ STATION_OPTIONS = {"level": "channel", "format": "text", "nodata": "404"}
 # A selection line with every part as wildcard, see `fdsn_post_body`
 ALL_STATIONS = NSL("", "", "")
 STATION_QUERY = "/fdsnws/station/1/query"
-
-# Station queries that fail with these are retried, besides `TRANSIENT_ERRORS`
-RETRY_STATUS = {429, 500, 502, 503, 504}
 
 
 def _check_server_pattern(nsl: NSL) -> NSL:
@@ -189,6 +188,7 @@ async def _query(session: aiohttp.ClientSession, label: str, body: str) -> str:
     """
     error = ""
     for attempt in range(RETRY_ATTEMPTS):
+        server_delay = 0.0
         try:
             async with session.post(STATION_QUERY, data=body) as response:
                 logger.debug("Fetching available stations from %s", response.url)
@@ -198,13 +198,14 @@ async def _query(session: aiohttp.ClientSession, label: str, body: str) -> str:
                     response.raise_for_status()
                     return await response.text()
                 error = f"{response.status} {get_error_str(response.status)}"
+                server_delay = retry_after(response.headers)
         except aiohttp.ClientResponseError as e:
             raise StationQueryError(f"{e.status} {get_error_str(e.status)}") from e
         except TRANSIENT_ERRORS as e:
             error = f"{type(e).__name__}: {e}"
 
         if attempt + 1 < RETRY_ATTEMPTS:
-            delay = RETRY_DELAY * 2**attempt
+            delay = max(RETRY_DELAY * 2**attempt, server_delay)
             logger.warning(
                 "Station query for %s failed (%s), retrying in %.0f s",
                 label,

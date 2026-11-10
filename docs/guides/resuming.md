@@ -62,7 +62,7 @@ To retry missing days, for example after a data centre has backfilled them, dele
 
 Other errors, such as timeouts, *5xx* server errors and broken connections, are **not** logged. Those day files are simply attempted again on the next run.
 
-A timeout or a lost connection is first retried twice in the same run, after 1 s and 2 s. The data of the failed attempt is discarded. A day file that still fails is counted as `failed`, and the download continues with the next one.
+A timeout, a lost connection, a server error (*5xx*) or `429 Too Many Requests` is first retried twice in the same run, after 2 s and 4 s, or later if the server asks for it with a `Retry-After` header (at most 60 s). Retries count against `rate_limit`. The data of the failed attempt is discarded. A day file that still fails is counted as `failed`, and the download continues with the next one.
 
 ## Very short fragments
 

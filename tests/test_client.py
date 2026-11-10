@@ -8,7 +8,14 @@ import pytest
 from conftest import FakeFDSN
 from pyrocko import io
 
-from fdsn_rush.client import RETRY_ATTEMPTS, DownloadDayfile, FDSNClient
+from fdsn_rush import client as client_module
+from fdsn_rush.client import (
+    RETRY_AFTER_MAX,
+    RETRY_ATTEMPTS,
+    DownloadDayfile,
+    FDSNClient,
+    retry_after,
+)
 from fdsn_rush.models.station import Stations
 from fdsn_rush.selection import StationSelection
 from fdsn_rush.utils import NSL, fdsn_time
@@ -139,7 +146,7 @@ async def test_download_retries_dropped_connections(
     fake_fdsn: FakeFDSN, stations: Stations, sds_archive: Path
 ) -> None:
     """A dropped connection is retried, the data of the failed attempt discarded."""
-    fake_fdsn.disconnects[HHZ] = ["body"] * (RETRY_ATTEMPTS - 1)
+    fake_fdsn.faults[HHZ] = ["body"] * (RETRY_ATTEMPTS - 1)
     client = FDSNClient(url=fake_fdsn.url, rate_limit=1000)
     (dayfile,) = _dayfiles(stations, "HHZ")
 
@@ -164,7 +171,7 @@ async def test_download_gives_up_on_dropped_connections(
     error: str,
 ) -> None:
     """A dayfile that keeps failing is counted as failed, the others are saved."""
-    fake_fdsn.disconnects[HHZ] = [mode] * 100
+    fake_fdsn.faults[HHZ] = [mode] * 100
     client = FDSNClient(url=fake_fdsn.url, rate_limit=1000, n_workers=2)
     dayfiles = _dayfiles(stations, "HHZ", "HHN", days=2)
 
@@ -178,3 +185,68 @@ async def test_download_gives_up_on_dropped_connections(
         saved = (sds_archive / dayfile.sds_path()).exists()
         assert saved == (dayfile.channel.code == "HHN")
         assert not (sds_archive / dayfile.sds_path(partial=True)).exists()
+
+
+async def test_download_retries_server_errors(
+    fake_fdsn: FakeFDSN, stations: Stations, sds_archive: Path
+) -> None:
+    fake_fdsn.faults[HHZ] = [503, 429]
+    client = FDSNClient(url=fake_fdsn.url, rate_limit=1000)
+    (dayfile,) = _dayfiles(stations, "HHZ")
+
+    await _download(client, sds_archive, [dayfile])
+
+    assert _n_requests(fake_fdsn, "HHZ") == RETRY_ATTEMPTS
+    assert client._stats.n_failed == 0
+    assert (sds_archive / dayfile.sds_path()).exists()
+
+
+async def test_download_gives_up_on_server_errors(
+    fake_fdsn: FakeFDSN, stations: Stations, sds_archive: Path
+) -> None:
+    """A lasting 500 is retried, then failed, and not written to the remote log."""
+    fake_fdsn.failing_nslc.add(HHZ)
+    client = FDSNClient(url=fake_fdsn.url, rate_limit=1000)
+    (dayfile,) = _dayfiles(stations, "HHZ")
+
+    writer = await _download(client, sds_archive, [dayfile])
+
+    assert _n_requests(fake_fdsn, "HHZ") == RETRY_ATTEMPTS
+    assert client._stats.n_failed == 1
+    assert not writer.remote_log.get_error(
+        dayfile.channel.nslc, dayfile.date, client.url
+    )
+
+
+async def test_download_timeout_is_logged_as_timeout(
+    fake_fdsn: FakeFDSN,
+    stations: Stations,
+    sds_archive: Path,
+    caplog: pytest.LogCaptureFixture,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(client_module, "RETRY_ATTEMPTS", 1)
+    fake_fdsn.faults[HHZ] = ["slow"]
+    client = FDSNClient(url=fake_fdsn.url, rate_limit=1000)
+    client.timeout = 0.1  # below the configurable minimum, to keep the test fast
+    (dayfile,) = _dayfiles(stations, "HHZ")
+
+    await _download(client, sds_archive, [dayfile])
+
+    assert client._stats.n_failed == 1
+    assert "XX.STA01..HHZ for 2024-01-01: Remote timeout (0.1 s)" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("headers", "seconds"),
+    [
+        (None, 0.0),
+        ({}, 0.0),
+        ({"Retry-After": "5"}, 5.0),
+        ({"Retry-After": "-5"}, 0.0),
+        ({"Retry-After": "86400"}, RETRY_AFTER_MAX),
+        ({"Retry-After": "Wed, 21 Oct 2026 07:28:00 GMT"}, 0.0),
+    ],
+)
+def test_retry_after(headers: dict[str, str] | None, seconds: float) -> None:
+    assert retry_after(headers) == seconds
