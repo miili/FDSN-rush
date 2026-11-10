@@ -11,6 +11,7 @@ from pyrocko import io
 
 from fdsn_rush import client as client_module
 from fdsn_rush.client import (
+    REAUTH_MIN_AGE,
     RETRY_AFTER_MAX,
     RETRY_ATTEMPTS,
     DownloadDayfile,
@@ -258,7 +259,7 @@ async def test_reauthenticate_once_for_all_workers(
 ) -> None:
     """Forgotten credentials are replaced by one token exchange for all requests."""
     client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
-    client._auth = await client._authenticate()
+    await client._authenticate()
     first, *dayfiles = _dayfiles(stations, "HHZ", "HHN", "HHE", days=3)
 
     async def fetch(session: aiohttp.ClientSession, dayfile: DownloadDayfile) -> bytes:
@@ -267,7 +268,8 @@ async def test_reauthenticate_once_for_all_workers(
 
     async with aiohttp.ClientSession(base_url=fake_fdsn.url) as session:
         assert await fetch(session, first)
-        # The server restarts, or the credentials expire
+        # A day later the credentials expire
+        client._auth_time -= 86400
         fake_fdsn.auth_users.clear()
         data = await asyncio.gather(*(fetch(session, d) for d in dayfiles))
 
@@ -275,39 +277,91 @@ async def test_reauthenticate_once_for_all_workers(
     assert fake_fdsn.n_auth == 2
 
 
-async def test_unauthorized_data_keeps_credentials(
-    fake_fdsn: FakeFDSN, stations: Stations, sds_archive: Path, eida_key: Path
+@pytest.mark.parametrize(("min_age", "n_auth"), [(REAUTH_MIN_AGE, 1), (0.0, 2)])
+async def test_unauthorized_network_is_exchanged_once(
+    fake_fdsn: FakeFDSN,
+    stations: Stations,
+    sds_archive: Path,
+    eida_key: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    min_age: float,
+    n_auth: int,
 ) -> None:
-    """A 401 for data the token does not grant is no reason to authenticate again."""
+    """A 401 for data the token does not grant costs at most one exchange.
+
+    Fresh credentials are never exchanged. Older ones are exchanged once, and
+    when the new credentials are rejected too, the network is marked.
+    """
+    monkeypatch.setattr(client_module, "REAUTH_MIN_AGE", min_age)
     fake_fdsn.unauthorized_nslc.add(HHZ)
-    client = FDSNClient(url=fake_fdsn.url, rate_limit=1000, eida_key=eida_key)
-    dayfiles = _dayfiles(stations, "HHZ", "HHN", days=2)
+    client = FDSNClient(
+        url=fake_fdsn.url, rate_limit=1000, n_workers=1, eida_key=eida_key
+    )
+    dayfiles = _dayfiles(stations, "HHZ", "HHN", days=3)
 
     await _download(client, sds_archive, dayfiles)
 
-    assert fake_fdsn.n_auth == 1
-    assert client._stats.n_failed == 2
-    assert all((sds_archive / d.sds_path()).exists() for d in dayfiles[2:])
+    assert fake_fdsn.n_auth == n_auth
+    assert client._unauthorized_networks == {"XX"}
+    assert client._stats.n_failed == 3
+    assert all((sds_archive / d.sds_path()).exists() for d in dayfiles[3:])
 
 
-async def test_reauthenticate_rules(fake_fdsn: FakeFDSN, eida_key: Path) -> None:
+async def test_failed_exchange_does_not_abort(
+    fake_fdsn: FakeFDSN,
+    stations: Stations,
+    sds_archive: Path,
+    eida_key: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed exchange fails the restricted dayfiles, and is not repeated."""
+    monkeypatch.setattr(client_module, "REAUTH_MIN_AGE", 0.0)
+    fake_fdsn.auth_status = [200, 500, 200]
+    fake_fdsn.unauthorized_nslc.add(HHZ)
+    client = FDSNClient(
+        url=fake_fdsn.url, rate_limit=1000, n_workers=1, eida_key=eida_key
+    )
+    dayfiles = _dayfiles(stations, "HHZ", "HHN", days=3)
+
+    await _download(client, sds_archive, dayfiles)
+
+    assert client._auth_failed
+    assert fake_fdsn.auth_status == [200]  # only one failed attempt
+    assert client._stats.n_failed == 3
+    assert all((sds_archive / d.sds_path()).exists() for d in dayfiles[3:])
+
+
+async def test_reauthenticate_rules(
+    fake_fdsn: FakeFDSN, eida_key: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
-    auth = client._auth = await client._authenticate()
+    await client._authenticate()
+    auth = client._auth
+    assert auth is not None
 
-    # Never accepted: the token does not grant the data
-    assert not await client._reauthenticate(auth, sent_at=5.0)
-    # Accepted while the rejected request was underway
-    client._auth_accepted_at = 10.0
-    assert not await client._reauthenticate(auth, sent_at=5.0)
+    # Fresh credentials: the token does not grant the network
+    assert not await client._reauthenticate(auth, "XX")
+    assert client._unauthorized_networks == {"XX"}
     assert fake_fdsn.n_auth == 1
 
-    # Accepted before, rejected now: forgotten
-    assert await client._reauthenticate(auth, sent_at=15.0)
+    # Older credentials: forgotten, unless the network is not granted
+    client._auth_time -= REAUTH_MIN_AGE
+    assert not await client._reauthenticate(auth, "XX")
+    assert await client._reauthenticate(auth, "YY")
     assert client._auth is not auth
     assert fake_fdsn.n_auth == 2
     # Another worker already replaced them
-    assert await client._reauthenticate(auth, sent_at=15.0)
+    assert await client._reauthenticate(auth, "YY")
     assert fake_fdsn.n_auth == 2
+
+    # A failed exchange is not repeated
+    monkeypatch.setattr(client_module, "REAUTH_MIN_AGE", 0.0)
+    eida_key.unlink()
+    auth = client._auth
+    assert not await client._reauthenticate(auth, "YY")
+    assert not await client._reauthenticate(auth, "ZZ")
+    assert client._auth is auth
+    assert client._auth_failed
 
 
 async def test_authenticate_rejects_expired_token(
@@ -330,4 +384,6 @@ async def test_authenticate_header(
     eida_key.write_text(eida_key.read_text().replace("-----", dashes))
     client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
 
-    assert await client._authenticate()
+    await client._authenticate()
+
+    assert client._auth is not None

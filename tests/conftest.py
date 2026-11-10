@@ -102,7 +102,8 @@ class FakeFDSN:
         self.faults: dict[tuple[str, str, str, str], list[str | int]] = {}
         # Users of the credentials handed out by /auth that the server still knows
         self.auth_users: set[str] = set()
-        self.n_auth = 0
+        self.n_auth = 0  # successful token exchanges
+        self.auth_status: list[int] = []  # answers to the next /auth requests
         self.unauthorized_nslc: set[tuple[str, str, str, str]] = set()  # always 401
         # Status codes to answer station queries for a network with, one per query
         self.station_errors: dict[str, list[int]] = {}
@@ -207,6 +208,9 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
     async def auth(request: web.Request) -> web.Response:
         if "BEGIN PGP" not in await request.text():
             raise web.HTTPBadRequest(text="Error 400: no token")
+        status = fake.auth_status.pop(0) if fake.auth_status else 200
+        if status != 200:
+            return web.Response(status=status, text=f"Error {status}")
         fake.n_auth += 1
         user = f"user{fake.n_auth}"
         fake.auth_users.add(user)

@@ -155,15 +155,15 @@ async def test_eida_reauthenticate(monkeypatch: pytest.MonkeyPatch) -> None:
     n_auth = 0
     authenticate = FDSNClient._authenticate
 
-    async def counting(self: FDSNClient) -> aiohttp.DigestAuthMiddleware:
+    async def counting(self: FDSNClient) -> None:
         nonlocal n_auth
         n_auth += 1
-        return await authenticate(self)
+        await authenticate(self)
 
     monkeypatch.setattr(FDSNClient, "_authenticate", counting)
     # Credentials that worked once, but the server has forgotten
     client._auth = aiohttp.DigestAuthMiddleware("forgotten", "credentials")
-    client._auth_accepted_at = 0.0
+    client._auth_time = -86400.0
 
     async def fetch(session: aiohttp.ClientSession, channel: Channel) -> int:
         chunks = client.download_waveform_data(session, channel, DAY[0])

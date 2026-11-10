@@ -64,6 +64,9 @@ RETRY_DELAY = 2.0
 # Longest wait a server's Retry-After header may impose
 RETRY_AFTER_MAX = 60.0
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# EIDA credentials younger than this are not exchanged again: a 401 for them
+# means that the token does not grant the network, not that they were forgotten
+REAUTH_MIN_AGE = 60.0
 TRANSIENT_ERRORS = (
     aiohttp.ClientConnectionError,
     aiohttp.ClientPayloadError,
@@ -307,9 +310,11 @@ class FDSNClient(Model):
     _stats: FDSNClientStats = PrivateAttr(default_factory=FDSNClientStats)
     _client: aiohttp.ClientSession | None = PrivateAttr(None)
     _auth: aiohttp.DigestAuthMiddleware | None = PrivateAttr(None)
-    # Event loop time of the last response that accepted `_auth`
-    _auth_accepted_at: float | None = PrivateAttr(None)
+    _auth_time: float = PrivateAttr(0.0)  # event loop time of the exchange
     _auth_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+    _auth_failed: bool = PrivateAttr(False)
+    # Networks the token does not grant: their 401s trigger no exchange
+    _unauthorized_networks: set[str] = PrivateAttr(default_factory=set)
 
     _work_queue: asyncio.Queue[DownloadDayfile] = PrivateAttr(
         default_factory=asyncio.Queue
@@ -353,8 +358,8 @@ class FDSNClient(Model):
             self.url,
         )
 
-    async def _authenticate(self) -> aiohttp.DigestAuthMiddleware:
-        """Exchange the EIDA token for temporary credentials."""
+    async def _authenticate(self) -> None:
+        """Exchange the EIDA token for temporary credentials, kept in `_auth`."""
         assert self.eida_key is not None
         logger.info("Preparing PGP authentication using key: %s", self.eida_key)
         key = self.eida_key.read_text()
@@ -397,28 +402,26 @@ class FDSNClient(Model):
         ):
             response.raise_for_status()
             user, password = (await response.text()).split(":", 1)
-            logger.info(
-                "Received username and password for token: %s / %s", user, password
-            )
+            logger.debug("Received temporary credentials for user %s", user)
 
-        return aiohttp.DigestAuthMiddleware(user, password)
+        self._auth = aiohttp.DigestAuthMiddleware(user, password)
+        self._auth_time = asyncio.get_running_loop().time()
 
     async def _reauthenticate(
         self,
         rejected: aiohttp.DigestAuthMiddleware,
-        sent_at: float,
+        network: str,
     ) -> bool:
         """Replace credentials the server rejected, once for all workers.
 
         The server forgets the credentials after 24 h at the latest, or when it
-        restarts. Workers that were rejected concurrently share one new token
-        exchange. The credentials are kept if they were never accepted, or if
-        they were accepted after the rejected request was sent: then the 401
-        means that the token does not grant access to the requested data.
+        restarts. Workers that were rejected concurrently share one exchange.
+        No exchange is made for networks the token does not grant, for
+        credentials younger than `REAUTH_MIN_AGE`, or after an exchange failed.
 
         Args:
             rejected: The credentials of the rejected request.
-            sent_at: Event loop time when the rejected request was sent.
+            network: The network code of the rejected request.
 
         Returns:
             True if the request should be repeated with the current credentials.
@@ -426,15 +429,36 @@ class FDSNClient(Model):
         async with self._auth_lock:
             if self._auth is not rejected:
                 return True
-            if self._auth_accepted_at is None or self._auth_accepted_at > sent_at:
+            if network in self._unauthorized_networks or self._auth_failed:
                 return False
+            if asyncio.get_running_loop().time() - self._auth_time < REAUTH_MIN_AGE:
+                self._mark_unauthorized(network)
+                return False
+
             logger.warning(
                 "Credentials rejected by %s, exchanging the EIDA token again",
                 self.url,
             )
-            self._auth = await self._authenticate()
-            self._auth_accepted_at = None
+            try:
+                await self._authenticate()
+            except (OSError, ValueError, aiohttp.ClientError, TimeoutError) as e:
+                logger.error(
+                    "Exchanging the EIDA token at %s failed, restricted data "
+                    "will fail for the rest of the run: %s",
+                    self.url,
+                    e,
+                )
+                self._auth_failed = True
+                return False
             return True
+
+    def _mark_unauthorized(self, network: str) -> None:
+        """Do not exchange the token again for 401s from this network."""
+        if network not in self._unauthorized_networks:
+            logger.warning(
+                "EIDA token does not grant network %s at %s", network, self.url
+            )
+            self._unauthorized_networks.add(network)
 
     async def download_metadata(
         self,
@@ -479,23 +503,15 @@ class FDSNClient(Model):
         params: dict[str, str],
         auth: aiohttp.DigestAuthMiddleware | None,
     ) -> aiohttp.ClientResponse:
-        """Send a dataselect request, authenticated if `auth` is given.
-
-        Raises:
-            aiohttp.ClientResponseError: If the server answered with an error.
-        """
+        """Send a dataselect request, authenticated if `auth` is given."""
         query = "query" if auth is None else "queryauth"
-        loop = asyncio.get_running_loop()
-        response = await client.get(
+        return await client.get(
             f"/fdsnws/dataselect/1/{query}",
             params=params,
             compress=True,
+            raise_for_status=True,
             middlewares=None if auth is None else (auth,),
         )
-        if auth is not None and auth is self._auth and response.status != 401:
-            self._auth_accepted_at = loop.time()
-        response.raise_for_status()
-        return response
 
     async def download_waveform_data(
         self,
@@ -520,17 +536,22 @@ class FDSNClient(Model):
         start_time = datetime_now()
 
         auth = self._auth
-        sent_at = loop.time()
         try:
             response = await self._dataselect(client, params, auth)
         except aiohttp.ClientResponseError as e:
             if (
                 e.status != 401
                 or auth is None
-                or not await self._reauthenticate(auth, sent_at)
+                or not await self._reauthenticate(auth, channel.nsl.network)
             ):
                 raise
-            response = await self._dataselect(client, params, self._auth)
+            try:
+                response = await self._dataselect(client, params, self._auth)
+            except aiohttp.ClientResponseError as e:
+                if e.status == 401:
+                    # Rejected with new credentials as well
+                    self._mark_unauthorized(channel.nsl.network)
+                raise
 
         async with response:
             self._stats.n_requests += 1
@@ -727,10 +748,9 @@ class FDSNClient(Model):
             self.n_workers,
         )
 
-        rate_limit_task = asyncio.create_task(rate_limit_timer())
         if self.eida_key is not None:
-            self._auth = await self._authenticate()
-            self._auth_accepted_at = None
+            await self._authenticate()
+        rate_limit_task = asyncio.create_task(rate_limit_timer())
         try:
             client = aiohttp.ClientSession(
                 base_url=str(self.url),

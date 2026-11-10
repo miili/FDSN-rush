@@ -57,7 +57,13 @@ The node forgets the temporary credentials after 24 hours at the latest, and whe
 WARNING  Credentials rejected by https://geofon.gfz.de/, exchanging the EIDA token again
 ```
 
-The token file is read again for this, so you can replace an expiring token while a long download runs.
+The token file is read again for this, so you can replace an expiring token while a long download runs. If the exchange fails, for example because the token has expired, the error is logged and the remaining restricted day files fail. They are requested again on the next run.
+
+A *401* for credentials less than a minute old, or a second *401* right after a new exchange, means that the token does not grant that network. The network is then logged once and does not cause further exchanges:
+
+```text
+WARNING  EIDA token does not grant network WB at https://geofon.gfz.de/
+```
 
 !!! warning "Access is granted per network"
 
