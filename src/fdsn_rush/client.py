@@ -672,7 +672,7 @@ class FDSNClient(Model):
                     chunk.date,
                     self.url,
                 ):
-                    logger.warning(
+                    logger.debug(
                         "Skipping %s for %s: %d %s error logged",
                         chunk.channel.nslc.pretty,
                         chunk.date,
