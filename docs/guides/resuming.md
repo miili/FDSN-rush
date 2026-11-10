@@ -62,6 +62,8 @@ To retry missing days, for example after a data centre has backfilled them, dele
 
 Other errors, such as timeouts, *5xx* server errors and broken connections, are **not** logged. Those day files are simply attempted again on the next run.
 
+A timeout or a lost connection is first retried twice in the same run, after 1 s and 2 s. The data of the failed attempt is discarded. A day file that still fails is counted as `failed`, and the download continues with the next one.
+
 ## Very short fragments
 
 Day files are cleaned before they are written. Traces shorter than `min_length_seconds` (default: one minute) are dropped, because these are typically glitches at the edges of gaps. If nothing is left after cleaning, no file is written and the day is retried on the next run.

@@ -58,6 +58,15 @@ ERRORS = {
     504: "Gateway Timeout",
 }
 
+# Requests that fail with these are retried, with the delay doubling
+RETRY_ATTEMPTS = 3
+RETRY_DELAY = 1.0
+TRANSIENT_ERRORS = (
+    aiohttp.ClientConnectionError,
+    aiohttp.ClientPayloadError,
+    TimeoutError,
+)
+
 
 class StationQueryError(Exception):
     """Station queries failed.
@@ -138,7 +147,8 @@ class FDSNClientStats(Stats):
     )
     n_failed: int = Field(
         default=0,
-        description="Number of dayfiles that failed (HTTP errors other than 404, timeouts)",
+        description="Number of dayfiles that failed (HTTP errors other than 404, "
+        "timeouts and lost connections after retries)",
     )
     n_station_queries_failed: int = Field(
         default=0,
@@ -475,6 +485,45 @@ class FDSNClient(Model):
             human_readable_bytes(speed),
         )
 
+    async def download_dayfile(
+        self,
+        client: aiohttp.ClientSession,
+        writer: SDSWriter,
+        dayfile: DownloadDayfile,
+    ) -> None:
+        """Download a dayfile into the writer, retrying transient errors.
+
+        The partial data of a failed attempt is discarded.
+
+        Raises:
+            aiohttp.ClientResponseError: If the server answered with an error.
+            TRANSIENT_ERRORS: If the last attempt failed.
+        """
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                async for data in self.download_waveform_data(
+                    client=client,
+                    channel=dayfile.channel,
+                    date=dayfile.date,
+                ):
+                    await writer.add_data(dayfile, data)
+            except TRANSIENT_ERRORS as e:
+                await writer.discard(dayfile)
+                if attempt + 1 == RETRY_ATTEMPTS:
+                    raise
+                delay = RETRY_DELAY * 2**attempt
+                logger.warning(
+                    "Download of %s for %s failed (%s: %s), retrying in %.0f s",
+                    dayfile.channel.nslc.pretty,
+                    dayfile.date,
+                    type(e).__name__,
+                    e,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+            else:
+                return
+
     async def add_work(self, download: DownloadDayfile) -> None:
         """Add a download task to the work queue."""
         await self._work_queue.put(download)
@@ -527,12 +576,7 @@ class FDSNClient(Model):
                 )
 
                 try:
-                    async for data in self.download_waveform_data(
-                        client=client,
-                        channel=chunk.channel,
-                        date=chunk.date,
-                    ):
-                        await writer.add_data(chunk, data)
+                    await self.download_dayfile(client, writer, chunk)
                 except aiohttp.ClientResponseError as e:
                     error_code = e.status
                     if error_code == 404:
@@ -555,12 +599,13 @@ class FDSNClient(Model):
                         error_code,
                     )
                     continue
-                except aiohttp.ClientPayloadError as e:
+                except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError) as e:
                     self._stats.n_failed += 1
                     logger.error(
-                        "Failed to download %s for %s: Payload error: %s",
+                        "Failed to download %s for %s: %s: %s",
                         chunk.channel.nslc.pretty,
                         chunk.date,
+                        type(e).__name__,
                         e,
                     )
                     continue

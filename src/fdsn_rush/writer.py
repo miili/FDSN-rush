@@ -147,6 +147,12 @@ class SDSWriter(Model):
         async with _file_lock(file_path):
             await asyncio.to_thread(_append_bytes, file_path, data)
 
+    async def discard(self, download: DownloadDayfile) -> None:
+        """Remove the partial data of a download, e.g. before retrying it."""
+        file_path = self.sds_archive / download.sds_path(partial=True)
+        async with _file_lock(file_path):
+            file_path.unlink(missing_ok=True)
+
     async def done(self, download: DownloadDayfile) -> None:
         """Finalize the download for the channel."""
         partial_file_path = self.sds_archive / download.sds_path(partial=True)

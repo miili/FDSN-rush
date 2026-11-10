@@ -15,7 +15,14 @@ from pydantic import (
 )
 
 from fdsn_rush.base import Model
-from fdsn_rush.client import HEADERS, StationQueryError, get_error_str
+from fdsn_rush.client import (
+    HEADERS,
+    RETRY_ATTEMPTS,
+    RETRY_DELAY,
+    TRANSIENT_ERRORS,
+    StationQueryError,
+    get_error_str,
+)
 from fdsn_rush.models.station import Stations, parse_stations
 from fdsn_rush.utils import NSL, NSLType, fdsn_float, fdsn_post_body
 
@@ -33,15 +40,8 @@ STATION_OPTIONS = {"level": "channel", "format": "text", "nodata": "404"}
 ALL_STATIONS = NSL("", "", "")
 STATION_QUERY = "/fdsnws/station/1/query"
 
-# Station queries that fail with these are retried, with the delay doubling
-RETRY_ATTEMPTS = 3
-RETRY_DELAY = 1.0
+# Station queries that fail with these are retried, besides `TRANSIENT_ERRORS`
 RETRY_STATUS = {429, 500, 502, 503, 504}
-TRANSIENT_ERRORS = (
-    aiohttp.ClientConnectionError,
-    aiohttp.ClientPayloadError,
-    TimeoutError,
-)
 
 
 def _check_server_pattern(nsl: NSL) -> NSL:
