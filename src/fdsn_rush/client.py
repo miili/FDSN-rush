@@ -306,6 +306,10 @@ class FDSNClient(Model):
 
     _stats: FDSNClientStats = PrivateAttr(default_factory=FDSNClientStats)
     _client: aiohttp.ClientSession | None = PrivateAttr(None)
+    _auth: aiohttp.DigestAuthMiddleware | None = PrivateAttr(None)
+    # Event loop time of the last response that accepted `_auth`
+    _auth_accepted_at: float | None = PrivateAttr(None)
+    _auth_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
 
     _work_queue: asyncio.Queue[DownloadDayfile] = PrivateAttr(
         default_factory=asyncio.Queue
@@ -349,12 +353,14 @@ class FDSNClient(Model):
             self.url,
         )
 
-    async def _get_auth_middlewares(self) -> tuple[aiohttp.DigestAuthMiddleware, ...]:
-        if self.eida_key is None:
-            return ()
+    async def _authenticate(self) -> aiohttp.DigestAuthMiddleware:
+        """Exchange the EIDA token for temporary credentials."""
+        assert self.eida_key is not None
         logger.info("Preparing PGP authentication using key: %s", self.eida_key)
         key = self.eida_key.read_text()
-        if not re.search(r"^BEGIN PGP (?:SIGNED )?MESSAGE", key, re.MULTILINE):
+        if not re.search(
+            r"^(?:-----)?BEGIN PGP (?:SIGNED )?MESSAGE", key, re.MULTILINE
+        ):
             raise ValueError(f"Invalid PGP key file: {self.eida_key}")
 
         for line in key.splitlines():
@@ -364,7 +370,7 @@ class FDSNClient(Model):
             except ValidationError:
                 continue
         else:
-            raise ValidationError("No valid EIDA token found in the key file")
+            raise ValueError(f"No valid EIDA token found in {self.eida_key}")
 
         if token_details.valid_until < datetime_now():
             raise ValueError(
@@ -395,7 +401,40 @@ class FDSNClient(Model):
                 "Received username and password for token: %s / %s", user, password
             )
 
-        return (aiohttp.DigestAuthMiddleware(user, password),)
+        return aiohttp.DigestAuthMiddleware(user, password)
+
+    async def _reauthenticate(
+        self,
+        rejected: aiohttp.DigestAuthMiddleware,
+        sent_at: float,
+    ) -> bool:
+        """Replace credentials the server rejected, once for all workers.
+
+        The server forgets the credentials after 24 h at the latest, or when it
+        restarts. Workers that were rejected concurrently share one new token
+        exchange. The credentials are kept if they were never accepted, or if
+        they were accepted after the rejected request was sent: then the 401
+        means that the token does not grant access to the requested data.
+
+        Args:
+            rejected: The credentials of the rejected request.
+            sent_at: Event loop time when the rejected request was sent.
+
+        Returns:
+            True if the request should be repeated with the current credentials.
+        """
+        async with self._auth_lock:
+            if self._auth is not rejected:
+                return True
+            if self._auth_accepted_at is None or self._auth_accepted_at > sent_at:
+                return False
+            logger.warning(
+                "Credentials rejected by %s, exchanging the EIDA token again",
+                self.url,
+            )
+            self._auth = await self._authenticate()
+            self._auth_accepted_at = None
+            return True
 
     async def download_metadata(
         self,
@@ -434,6 +473,30 @@ class FDSNClient(Model):
         )
         return data
 
+    async def _dataselect(
+        self,
+        client: aiohttp.ClientSession,
+        params: dict[str, str],
+        auth: aiohttp.DigestAuthMiddleware | None,
+    ) -> aiohttp.ClientResponse:
+        """Send a dataselect request, authenticated if `auth` is given.
+
+        Raises:
+            aiohttp.ClientResponseError: If the server answered with an error.
+        """
+        query = "query" if auth is None else "queryauth"
+        loop = asyncio.get_running_loop()
+        response = await client.get(
+            f"/fdsnws/dataselect/1/{query}",
+            params=params,
+            compress=True,
+            middlewares=None if auth is None else (auth,),
+        )
+        if auth is not None and auth is self._auth and response.status != 401:
+            self._auth_accepted_at = loop.time()
+        response.raise_for_status()
+        return response
+
     async def download_waveform_data(
         self,
         client: aiohttp.ClientSession,
@@ -456,14 +519,20 @@ class FDSNClient(Model):
         loop = asyncio.get_running_loop()
         start_time = datetime_now()
 
-        query = "query" if self.eida_key is None else "queryauth"
+        auth = self._auth
+        sent_at = loop.time()
+        try:
+            response = await self._dataselect(client, params, auth)
+        except aiohttp.ClientResponseError as e:
+            if (
+                e.status != 401
+                or auth is None
+                or not await self._reauthenticate(auth, sent_at)
+            ):
+                raise
+            response = await self._dataselect(client, params, self._auth)
 
-        async with client.get(
-            f"/fdsnws/dataselect/1/{query}",
-            params=params,
-            compress=True,
-            raise_for_status=True,
-        ) as response:
+        async with response:
             self._stats.n_requests += 1
             rate_limit = response.headers.get("X-RateLimit-Limit", None)
             if rate_limit is not None:
@@ -659,12 +728,13 @@ class FDSNClient(Model):
         )
 
         rate_limit_task = asyncio.create_task(rate_limit_timer())
-        middleware = await self._get_auth_middlewares()
+        if self.eida_key is not None:
+            self._auth = await self._authenticate()
+            self._auth_accepted_at = None
         try:
             client = aiohttp.ClientSession(
                 base_url=str(self.url),
                 timeout=aiohttp.ClientTimeout(sock_read=self.timeout),
-                middlewares=middleware,
                 auto_decompress=True,
                 headers=HEADERS,
                 connector=aiohttp.TCPConnector(limit=self.n_connections),

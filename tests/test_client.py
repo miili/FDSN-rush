@@ -4,6 +4,7 @@ import asyncio
 from datetime import date, timedelta
 from pathlib import Path
 
+import aiohttp
 import pytest
 from conftest import FakeFDSN
 from pyrocko import io
@@ -250,3 +251,83 @@ async def test_download_timeout_is_logged_as_timeout(
 )
 def test_retry_after(headers: dict[str, str] | None, seconds: float) -> None:
     assert retry_after(headers) == seconds
+
+
+async def test_reauthenticate_once_for_all_workers(
+    fake_fdsn: FakeFDSN, stations: Stations, eida_key: Path
+) -> None:
+    """Forgotten credentials are replaced by one token exchange for all requests."""
+    client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
+    client._auth = await client._authenticate()
+    first, *dayfiles = _dayfiles(stations, "HHZ", "HHN", "HHE", days=3)
+
+    async def fetch(session: aiohttp.ClientSession, dayfile: DownloadDayfile) -> bytes:
+        chunks = client.download_waveform_data(session, dayfile.channel, dayfile.date)
+        return b"".join([chunk async for chunk in chunks])
+
+    async with aiohttp.ClientSession(base_url=fake_fdsn.url) as session:
+        assert await fetch(session, first)
+        # The server restarts, or the credentials expire
+        fake_fdsn.auth_users.clear()
+        data = await asyncio.gather(*(fetch(session, d) for d in dayfiles))
+
+    assert all(data)
+    assert fake_fdsn.n_auth == 2
+
+
+async def test_unauthorized_data_keeps_credentials(
+    fake_fdsn: FakeFDSN, stations: Stations, sds_archive: Path, eida_key: Path
+) -> None:
+    """A 401 for data the token does not grant is no reason to authenticate again."""
+    fake_fdsn.unauthorized_nslc.add(HHZ)
+    client = FDSNClient(url=fake_fdsn.url, rate_limit=1000, eida_key=eida_key)
+    dayfiles = _dayfiles(stations, "HHZ", "HHN", days=2)
+
+    await _download(client, sds_archive, dayfiles)
+
+    assert fake_fdsn.n_auth == 1
+    assert client._stats.n_failed == 2
+    assert all((sds_archive / d.sds_path()).exists() for d in dayfiles[2:])
+
+
+async def test_reauthenticate_rules(fake_fdsn: FakeFDSN, eida_key: Path) -> None:
+    client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
+    auth = client._auth = await client._authenticate()
+
+    # Never accepted: the token does not grant the data
+    assert not await client._reauthenticate(auth, sent_at=5.0)
+    # Accepted while the rejected request was underway
+    client._auth_accepted_at = 10.0
+    assert not await client._reauthenticate(auth, sent_at=5.0)
+    assert fake_fdsn.n_auth == 1
+
+    # Accepted before, rejected now: forgotten
+    assert await client._reauthenticate(auth, sent_at=15.0)
+    assert client._auth is not auth
+    assert fake_fdsn.n_auth == 2
+    # Another worker already replaced them
+    assert await client._reauthenticate(auth, sent_at=15.0)
+    assert fake_fdsn.n_auth == 2
+
+
+async def test_authenticate_rejects_expired_token(
+    fake_fdsn: FakeFDSN, eida_key: Path
+) -> None:
+    eida_key.write_text(
+        eida_key.read_text().replace('"valid_until": "2', '"valid_until": "1')
+    )
+    client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
+
+    with pytest.raises(ValueError, match="EIDA token expired"):
+        await client._authenticate()
+
+
+@pytest.mark.parametrize("dashes", ["-----", ""])
+async def test_authenticate_header(
+    fake_fdsn: FakeFDSN, eida_key: Path, dashes: str
+) -> None:
+    """The PGP header is accepted with and without the dashes."""
+    eida_key.write_text(eida_key.read_text().replace("-----", dashes))
+    client = FDSNClient(url=fake_fdsn.url, eida_key=eida_key)
+
+    assert await client._authenticate()
