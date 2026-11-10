@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import math
 import os
 from datetime import date
+from pathlib import Path
 
+import aiohttp
 import pytest
 
-from fdsn_rush.client import FDSNClient
+from fdsn_rush.client import HEADERS, FDSNClient
 from fdsn_rush.models.station import Channel, Stations
 from fdsn_rush.selection import (
     GeographicSelection,
@@ -25,6 +28,8 @@ pytestmark = pytest.mark.skipif(
 DAY = date(2024, 1, 1), date(2024, 1, 2)
 # INGV serves the Campi Flegrei network (IV)
 INGV = "https://webservices.ingv.it"
+# Path to an EIDA token that grants the restricted WB network at GEOFON
+EIDA_TOKEN = os.environ.get("FDSN_RUSH_EIDA_TOKEN")
 
 
 def _locations(client: FDSNClient) -> set[str]:
@@ -135,3 +140,46 @@ async def test_include_restricted() -> None:
     selection = GeographicSelection(include_restricted=False)
     stations = await selection.get_available_stations(FDSNClient(url=INGV), *DAY)
     assert stations.n_stations
+
+
+@pytest.mark.skipif(not EIDA_TOKEN, reason="needs FDSN_RUSH_EIDA_TOKEN")
+async def test_eida_reauthenticate(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Workers rejected with forgotten credentials share one new token exchange."""
+    assert EIDA_TOKEN
+    client = FDSNClient(url="https://geofon.gfz.de", eida_key=Path(EIDA_TOKEN))
+    await client.prepare()
+    await client.add_selection(StationSelection(stations=["WB"]), *DAY)
+    channels = [c for c in _channels(client.available_stations) if c.code[-1] == "Z"]
+    assert len(channels) >= 4
+
+    n_auth = 0
+    authenticate = FDSNClient._authenticate
+
+    async def counting(self: FDSNClient) -> None:
+        nonlocal n_auth
+        n_auth += 1
+        await authenticate(self)
+
+    monkeypatch.setattr(FDSNClient, "_authenticate", counting)
+    # Credentials that worked once, but the server has forgotten
+    client._auth = aiohttp.DigestAuthMiddleware("forgotten", "credentials")
+    client._auth_time = -86400.0
+
+    async def fetch(session: aiohttp.ClientSession, channel: Channel) -> int:
+        # The first attempt fails with 401 and triggers the exchange
+        for _ in range(2):
+            chunks = client.download_waveform_data(session, channel, DAY[0])
+            try:
+                return sum([len(chunk) async for chunk in chunks])
+            except aiohttp.ClientResponseError as e:
+                if e.status != 401:
+                    return -e.status
+        return -401
+
+    async with aiohttp.ClientSession(base_url=str(client.url), headers=HEADERS) as s:
+        results = await asyncio.gather(*(fetch(s, c) for c in channels[:4]))
+
+    assert n_auth == 1
+    # Accepted: data, or 404 for a channel without data that day
+    assert all(result > 0 or result == -404 for result in results)
+    assert any(result > 0 for result in results)

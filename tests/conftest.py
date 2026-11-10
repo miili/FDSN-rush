@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import AsyncIterator, Callable
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
@@ -99,6 +100,11 @@ class FakeFDSN:
         # the response, "body" halfway through it, "slow" waits 0.5 s before the
         # response, and a status code answers with it and `Retry-After: 0`
         self.faults: dict[tuple[str, str, str, str], list[str | int]] = {}
+        # Users of the credentials handed out by /auth that the server still knows
+        self.auth_users: set[str] = set()
+        self.n_auth = 0  # successful token exchanges
+        self.auth_status: list[int] = []  # answers to the next /auth requests
+        self.unauthorized_nslc: set[tuple[str, str, str, str]] = set()  # always 401
         # Status codes to answer station queries for a network with, one per query
         self.station_errors: dict[str, list[int]] = {}
 
@@ -199,9 +205,46 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
         request.transport.close()
         return response
 
+    async def auth(request: web.Request) -> web.Response:
+        if "BEGIN PGP" not in await request.text():
+            raise web.HTTPBadRequest(text="Error 400: no token")
+        status = fake.auth_status.pop(0) if fake.auth_status else 200
+        if status != 200:
+            return web.Response(status=status, text=f"Error {status}")
+        fake.n_auth += 1
+        user = f"user{fake.n_auth}"
+        fake.auth_users.add(user)
+        return web.Response(text=f"{user}:secret")
+
+    async def queryauth(request: web.Request) -> web.StreamResponse:
+        # Checks the user name only, not the digest
+        match = re.search(
+            r'username="([^"]+)"', request.headers.get("Authorization", "")
+        )
+        nslc = (
+            request.query.get("network"),
+            request.query.get("station"),
+            request.query.get("location", "").replace("--", ""),
+            request.query.get("channel"),
+        )
+        if (
+            not match
+            or match[1] not in fake.auth_users
+            or nslc in fake.unauthorized_nslc
+        ):
+            raise web.HTTPUnauthorized(
+                headers={
+                    "WWW-Authenticate": 'Digest realm="fake", nonce="abc", qop="auth"'
+                },
+                text="Error 401",
+            )
+        return await dataselect(request)
+
     app = web.Application()
     app.router.add_post("/fdsnws/station/1/query", station)
     app.router.add_get("/fdsnws/dataselect/1/query", dataselect)
+    app.router.add_post("/fdsnws/dataselect/1/auth", auth)
+    app.router.add_get("/fdsnws/dataselect/1/queryauth", queryauth)
 
     server = TestServer(app)
     await server.start_server()
@@ -213,3 +256,23 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
 @pytest.fixture
 def sds_archive(tmp_path: Path) -> Path:
     return tmp_path / "data"
+
+
+@pytest.fixture
+def eida_key(tmp_path: Path) -> Path:
+    """An EIDA token file, valid for a day."""
+    now = datetime.now(UTC)
+    details = (
+        f'{{"valid_until": "{(now + timedelta(days=1)).isoformat()}", '
+        f'"issued": "{now.isoformat()}", "mail": "you@example.org"}}'
+    )
+    path = tmp_path / "eidatoken"
+    path.write_text(
+        "-----BEGIN PGP SIGNED MESSAGE-----\n"
+        "Hash: SHA256\n\n"
+        f"{details}\n"
+        "-----BEGIN PGP SIGNATURE-----\n"
+        "...\n"
+        "-----END PGP SIGNATURE-----\n"
+    )
+    return path

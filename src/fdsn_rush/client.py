@@ -64,6 +64,8 @@ RETRY_DELAY = 2.0
 # Longest wait a server's Retry-After header may impose
 RETRY_AFTER_MAX = 60.0
 RETRY_STATUS = {429, 500, 502, 503, 504}
+# Minimum time between two exchanges of the EIDA token
+REAUTH_INTERVAL = 60.0
 TRANSIENT_ERRORS = (
     aiohttp.ClientConnectionError,
     aiohttp.ClientPayloadError,
@@ -306,6 +308,10 @@ class FDSNClient(Model):
 
     _stats: FDSNClientStats = PrivateAttr(default_factory=FDSNClientStats)
     _client: aiohttp.ClientSession | None = PrivateAttr(None)
+    _auth: aiohttp.DigestAuthMiddleware | None = PrivateAttr(None)
+    _auth_time: float = PrivateAttr(0.0)  # event loop time of the exchange
+    _auth_lock: asyncio.Lock = PrivateAttr(default_factory=asyncio.Lock)
+    _auth_failed: bool = PrivateAttr(False)
 
     _work_queue: asyncio.Queue[DownloadDayfile] = PrivateAttr(
         default_factory=asyncio.Queue
@@ -349,12 +355,14 @@ class FDSNClient(Model):
             self.url,
         )
 
-    async def _get_auth_middlewares(self) -> tuple[aiohttp.DigestAuthMiddleware, ...]:
-        if self.eida_key is None:
-            return ()
+    async def _authenticate(self) -> None:
+        """Exchange the EIDA token for temporary credentials, kept in `_auth`."""
+        assert self.eida_key is not None
         logger.info("Preparing PGP authentication using key: %s", self.eida_key)
         key = self.eida_key.read_text()
-        if not re.search(r"^BEGIN PGP (?:SIGNED )?MESSAGE", key, re.MULTILINE):
+        if not re.search(
+            r"^(?:-----)?BEGIN PGP (?:SIGNED )?MESSAGE", key, re.MULTILINE
+        ):
             raise ValueError(f"Invalid PGP key file: {self.eida_key}")
 
         for line in key.splitlines():
@@ -364,7 +372,7 @@ class FDSNClient(Model):
             except ValidationError:
                 continue
         else:
-            raise ValidationError("No valid EIDA token found in the key file")
+            raise ValueError(f"No valid EIDA token found in {self.eida_key}")
 
         if token_details.valid_until < datetime_now():
             raise ValueError(
@@ -391,11 +399,37 @@ class FDSNClient(Model):
         ):
             response.raise_for_status()
             user, password = (await response.text()).split(":", 1)
-            logger.info(
-                "Received username and password for token: %s / %s", user, password
-            )
+            logger.debug("Received temporary credentials for user %s", user)
 
-        return (aiohttp.DigestAuthMiddleware(user, password),)
+        self._auth = aiohttp.DigestAuthMiddleware(user, password)
+        self._auth_time = asyncio.get_running_loop().time()
+
+    async def _reauthenticate(self) -> None:
+        """Exchange the EIDA token again after a 401.
+
+        SeisComP forgets the credentials after 24 h at the latest, and when it
+        restarts. It answers 403, not 401, for data the token does not grant.
+        The exchange is shared by all workers: it is made at most once per
+        `REAUTH_INTERVAL`, and not again after it failed.
+        """
+        async with self._auth_lock:
+            if self._auth_failed:
+                return
+            if asyncio.get_running_loop().time() - self._auth_time < REAUTH_INTERVAL:
+                return
+            logger.warning(
+                "Credentials rejected by %s, exchanging the EIDA token again",
+                self.url,
+            )
+            try:
+                await self._authenticate()
+            except (OSError, ValueError, aiohttp.ClientError, TimeoutError) as e:
+                logger.error(
+                    "Exchanging the EIDA token at %s failed, not trying again: %s",
+                    self.url,
+                    e,
+                )
+                self._auth_failed = True
 
     async def download_metadata(
         self,
@@ -456,14 +490,22 @@ class FDSNClient(Model):
         loop = asyncio.get_running_loop()
         start_time = datetime_now()
 
-        query = "query" if self.eida_key is None else "queryauth"
+        auth = self._auth
+        query = "query" if auth is None else "queryauth"
+        try:
+            response = await client.get(
+                f"/fdsnws/dataselect/1/{query}",
+                params=params,
+                compress=True,
+                raise_for_status=True,
+                middlewares=None if auth is None else (auth,),
+            )
+        except aiohttp.ClientResponseError as e:
+            if e.status == 401 and auth is not None:
+                await self._reauthenticate()
+            raise
 
-        async with client.get(
-            f"/fdsnws/dataselect/1/{query}",
-            params=params,
-            compress=True,
-            raise_for_status=True,
-        ) as response:
+        async with response:
             self._stats.n_requests += 1
             rate_limit = response.headers.get("X-RateLimit-Limit", None)
             if rate_limit is not None:
@@ -507,7 +549,8 @@ class FDSNClient(Model):
         """Download a dayfile into the writer, retrying transient errors.
 
         Every attempt first awaits `wait`, the rate limiter. Lost connections,
-        timeouts and `RETRY_STATUS` responses are retried, after the longer of
+        timeouts, `RETRY_STATUS` responses and, with an EIDA token, 401s are
+        retried, after the longer of
         the backoff and the server's Retry-After header. The partial data of a
         failed attempt is discarded.
 
@@ -527,7 +570,9 @@ class FDSNClient(Model):
                 ):
                     await writer.add_data(dayfile, data)
             except aiohttp.ClientResponseError as e:
-                if e.status not in RETRY_STATUS or last_attempt:
+                # A rejected login, e.g. a stale digest challenge
+                login_failed = e.status == 401 and self._auth is not None
+                if (e.status not in RETRY_STATUS and not login_failed) or last_attempt:
                     raise
                 error = f"{e.status} {get_error_str(e.status)}"
                 server_delay = retry_after(e.headers)
@@ -582,7 +627,7 @@ class FDSNClient(Model):
                     chunk.date,
                     self.url,
                 ):
-                    logger.warning(
+                    logger.debug(
                         "Skipping %s for %s: %d %s error logged",
                         chunk.channel.nslc.pretty,
                         chunk.date,
@@ -658,13 +703,13 @@ class FDSNClient(Model):
             self.n_workers,
         )
 
+        if self.eida_key is not None:
+            await self._authenticate()
         rate_limit_task = asyncio.create_task(rate_limit_timer())
-        middleware = await self._get_auth_middlewares()
         try:
             client = aiohttp.ClientSession(
                 base_url=str(self.url),
                 timeout=aiohttp.ClientTimeout(sock_read=self.timeout),
-                middlewares=middleware,
                 auto_decompress=True,
                 headers=HEADERS,
                 connector=aiohttp.TCPConnector(limit=self.n_connections),

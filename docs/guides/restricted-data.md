@@ -51,9 +51,17 @@ INFO     Preparing PGP authentication using key: /home/you/.eidatoken
 INFO     Using EIDA token for you@example.org valid until 2026-10-30 12:00:00+00:00
 ```
 
+A *401 Unauthorized* means that the node rejected the login. It forgets the temporary credentials after 24 hours at the latest, and when it restarts. A 401 is retried like a server error, after 2 s and 4 s, and FDSN Rush exchanges the token again, at most once a minute for all workers:
+
+```text
+WARNING  Credentials rejected by https://geofon.gfz.de/, exchanging the EIDA token again
+```
+
+The token file is read again for this, so you can replace an expiring token while a long download runs. If the exchange fails, for example because the token has expired, the error is logged and not repeated. Day files that still fail with 401 are requested again on the next run.
+
 !!! warning "Access is granted per network"
 
-    A token proves who you are. It does not grant access to every network. If you are not authorised for a network, its requests fail with *401 Unauthorized* or *403 Forbidden*. Ask the network operator for access.
+    A token proves who you are. It does not grant access to every network. If you are not authorised for a network, its requests fail with *403 Forbidden*. Ask the network operator for access.
 
 ## Several EIDA nodes
 
