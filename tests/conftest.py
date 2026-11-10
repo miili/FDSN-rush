@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from datetime import UTC, date, datetime, time
 from fnmatch import fnmatch
@@ -12,7 +13,7 @@ from aiohttp import web
 from aiohttp.test_utils import TestServer
 from pyrocko import io, trace
 
-from fdsn_rush import selection
+from fdsn_rush import client, selection
 from fdsn_rush.models.station import Stations, parse_stations
 
 STATION_HEADER = (
@@ -54,6 +55,7 @@ MSeedFactory = Callable[..., bytes]
 
 @pytest.fixture(autouse=True)
 def _no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(client, "RETRY_DELAY", 0.0)
     monkeypatch.setattr(selection, "RETRY_DELAY", 0.0)
 
 
@@ -93,6 +95,10 @@ class FakeFDSN:
         self.dataselect_requests: list[dict[str, str]] = []
         self.station_requests: list[dict[str, Any]] = []
         self.failing_nslc: set[tuple[str, str, str, str]] = set()  # answered with 500
+        # Faults for an NSLC, one per query: "start" drops the connection before
+        # the response, "body" halfway through it, "slow" waits 0.5 s before the
+        # response, and a status code answers with it and `Retry-After: 0`
+        self.faults: dict[tuple[str, str, str, str], list[str | int]] = {}
         # Status codes to answer station queries for a network with, one per query
         self.station_errors: dict[str, list[int]] = {}
 
@@ -146,7 +152,7 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
             return web.Response(text="<FDSNStationXML/>")
         return web.Response(text="\n".join([STATION_HEADER, *lines]))
 
-    async def dataselect(request: web.Request) -> web.Response:
+    async def dataselect(request: web.Request) -> web.StreamResponse:
         query = request.query
         fake.dataselect_requests.append(dict(query))
         # Be as strict as a real server: all selection parameters are mandatory,
@@ -168,8 +174,30 @@ async def fake_fdsn(make_mseed: MSeedFactory) -> AsyncIterator[FakeFDSN]:
             raise web.HTTPInternalServerError(text="Error 500")
         if nslc in MISSING_NSLC:
             raise web.HTTPNotFound(text="Error 404: no data")
-        day = start.date()
-        return web.Response(body=make_mseed(nslc, day))
+        body = make_mseed(nslc, start.date())
+        faults = fake.faults.get(nslc)
+        if not faults:
+            return web.Response(body=body)
+
+        fault = faults.pop(0)
+        if isinstance(fault, int):
+            return web.Response(
+                status=fault, headers={"Retry-After": "0"}, text=f"Error {fault}"
+            )
+        if fault == "slow":
+            await asyncio.sleep(0.5)
+            return web.Response(body=body)
+        assert request.transport is not None
+        if fault == "start":
+            request.transport.close()
+            return web.Response(body=body)
+        response = web.StreamResponse()
+        response.content_length = len(body)
+        await response.prepare(request)
+        await response.write(body[: len(body) // 2])
+        await asyncio.sleep(0.01)
+        request.transport.close()
+        return response
 
     app = web.Application()
     app.router.add_post("/fdsnws/station/1/query", station)

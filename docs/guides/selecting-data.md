@@ -94,7 +94,7 @@ Excluded stations are removed after the server has answered, from this selection
 
 ### When the server fails
 
-A station query that fails with a server error (5xx), `429 Too Many Requests`, a timeout or a lost connection is retried twice, after 1 s and 2 s. Other errors, such as `400 Bad Request` or `401 Unauthorized`, are not retried. A failed query is logged and counted as `failed_queries`. The stations of the other queries are still downloaded, and the run ends as `partial`. If every selection fails on every client, the run stops with an `error`. See [Scripting and automation](scripting.md).
+A station query that fails with a server error (5xx), `429 Too Many Requests`, a timeout or a lost connection is retried twice, after 2 s and 4 s, or later if the server asks for it with a `Retry-After` header (at most 60 s). Other errors, such as `400 Bad Request` or `401 Unauthorized`, are not retried. A failed query is logged and counted as `failed_queries`. The stations of the other queries are still downloaded, and the run ends as `partial`. If every selection fails on every client, the run stops with an `error`. See [Scripting and automation](scripting.md).
 
 ### Restricted stations
 

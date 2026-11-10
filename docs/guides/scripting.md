@@ -34,7 +34,7 @@ Nothing else is printed. An invalid configuration file is the exception: it rais
 :   Day files saved in this run.
 
 `no_data`, `failed`
-:   Day files the server answered with 404, and day files that failed otherwise (other HTTP errors, timeouts).
+:   Day files the server answered with 404, and day files that failed otherwise (other HTTP errors, and timeouts and lost connections after retries).
 
 `failed_queries`
 :   Station queries that failed after retries (HTTP errors other than 404 and 204, timeouts). Their stations are missing from the plan. See [When the server fails](selecting-data.md#when-the-server-fails).
