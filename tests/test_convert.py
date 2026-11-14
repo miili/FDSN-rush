@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
-import click
 import numpy as np
 import pytest
 from pyrocko import io, trace
@@ -147,4 +147,5 @@ def test_cli_rename_invalid(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     # Rich styles the output on CI (GITHUB_ACTIONS forces a terminal)
-    assert "Invalid value for --rename" in click.unstyle(result.output)
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "Invalid value for --rename" in output
