@@ -11,7 +11,7 @@ from pydantic import DirectoryPath, NewPath
 from rich.logging import RichHandler
 
 from fdsn_rush import __version__, utils
-from fdsn_rush.convert import convert_sds
+from fdsn_rush.convert import Rename, convert_sds
 from fdsn_rush.manager import FDSNDownloadManager
 from fdsn_rush.stats import live_view
 from fdsn_rush.utils import report
@@ -159,13 +159,17 @@ def convert(
             help="Path to the output directory for SDS archive",
         ),
     ],
-    network: Annotated[
-        str,
+    rename: Annotated[
+        list[str] | None,
         typer.Option(
-            ...,
-            help="Network code to set for all traces",
+            "--rename",
+            help=(
+                "Rename codes, as FROM=TO in NET.STA.LOC.CHA form, e.g. "
+                "'1X...=2D...'. Empty parts match any code (FROM) or keep it "
+                "(TO), '--' is the blank location. Repeatable, applied in order."
+            ),
         ),
-    ] = "",
+    ] = None,
     steim: Annotated[
         int,
         typer.Option(
@@ -184,7 +188,11 @@ def convert(
     """Convert existing MiniSEED files to SDS archive."""
     if steim not in (1, 2):
         raise typer.BadParameter("STEIM must be either 1 or 2")
-    asyncio.run(convert_sds(input, output, network, steim, n_workers))
+    try:
+        renames = [Rename.parse(rule) for rule in rename or ()]
+    except ValueError as e:
+        raise typer.BadParameter(str(e), param_hint="--rename") from e
+    asyncio.run(convert_sds(input, output, renames, steim, n_workers))
 
 
 def main():

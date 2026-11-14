@@ -136,8 +136,8 @@ fdsn-rush convert [OPTIONS] INPUT OUTPUT
 `OUTPUT`
 :   Root directory of the SDS archive to write.
 
-`--network CODE`
-:   Overwrite the network code of all traces.
+`--rename FROM=TO`
+:   Rename codes. Both sides are written as `NET.STA.LOC.CHA`, and missing trailing parts are empty. In `FROM`, each part is an fnmatch pattern, an empty part matches any code and `--` matches the blank location. In `TO`, an empty part keeps the code and `--` sets the blank location. Repeatable. The rules are applied in the given order, each one to the codes left by the rules before it. See [Renaming codes](../guides/convert.md#renaming-codes).
 
 `--steim 1|2`
 :   STEIM compression level. Default: `2`.
