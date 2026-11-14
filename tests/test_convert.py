@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
+import click
 import numpy as np
 import pytest
 from pyrocko import io, trace
@@ -145,4 +146,5 @@ def test_cli_rename_invalid(tmp_path: Path) -> None:
         app, ["convert", str(tmp_path), str(tmp_path / "sds"), "--rename", "=ABC"]
     )
     assert result.exit_code == 2
-    assert "--rename" in result.output
+    # Rich styles the output on CI (GITHUB_ACTIONS forces a terminal)
+    assert "Invalid value for --rename" in click.unstyle(result.output)
