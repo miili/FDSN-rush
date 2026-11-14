@@ -13,7 +13,7 @@ uv run fdsn-rush download config.json -v  # -v = DEBUG logging
 uv run fdsn-rush metadata config.json    # inventory + StationXML only
 uv run fdsn-rush check config.json       # validate the config only
 uv run fdsn-rush download config.json -n  # non-interactive: only key: value lines on stdout
-uv run fdsn-rush convert in/ out-sds/ --steim 2 --network XX
+uv run fdsn-rush convert in/ out-sds/ --steim 2 --rename '1X...=2D...'
 uv run prek run --all-files               # lint + format, same hooks as CI
 uv run pytest                             # offline, < 1 s
 uv run --group docs zensical serve        # docs preview on localhost:8000
@@ -55,7 +55,7 @@ All modules are in `src/fdsn_rush/`.
 - `base.py`: `Model`, the base of every user-facing config model (`FDSNDownloadManager`, `FDSNClient`, `SDSWriter`, the selections). It sets `extra="forbid"`, so unknown or removed options fail validation.
 - `utils.py`: `NSL`, a NamedTuple that parses `"NET.STA.LOC"`, and `NSLType`, its Annotated pydantic type. Use `NSLType` for model fields and `NSL` everywhere else. `selector.match(station_nsl)` treats `self` as the pattern: each empty part is a wildcard, `--` is the blank location, and the rest are fnmatch patterns (e.g. `XX.STA*`). `fdsn_time`, `fdsn_float` (fixed-point, never scientific notation) and `fdsn_post_body` format FDSN requests. Codes with `*`, `?` or `[` skip the SEED length check. `NSLC`, `Date` (accepts/serializes `"today"`/`"yesterday"`), `ByteSizeStr`, `FilePath`, `EIDADetails`, `datetime_now()`/`date_today()` (UTC).
 - `stats.py`: `Stats` base model. Every instance self-registers in a global `WeakValueDictionary`, and `live_view()` renders all of them as a Rich `Live` panel sorted by `_pos`. To add a stats panel, subclass `Stats` and implement `_render(table)`.
-- `convert.py`: standalone MiniSEED → SDS converter (`convert_sds`). It has its own `SDS_TEMPLATE` copy and uses bounded concurrency via an `asyncio.Queue`.
+- `convert.py`: standalone MiniSEED → SDS converter (`convert_sds`). It has its own `SDS_TEMPLATE` copy and uses bounded concurrency via an `asyncio.Queue`. `--rename FROM=TO` rules (`Rename`, `NET.STA.LOC.CHA` on both sides) are applied to every trace in order, so each rule sees the codes left by the rules before it. They run before the midnight split, so the new codes set both the record headers and the SDS path. At the end it warns about target codes that collect data from several sources (appends do not check overlaps).
 
 ## Conventions
 
